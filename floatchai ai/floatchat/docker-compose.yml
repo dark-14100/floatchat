@@ -1,0 +1,97 @@
+# FloatChat - Local Development Infrastructure
+# Usage: docker-compose up -d
+#
+# Services:
+#   - PostgreSQL 15 with PostGIS (port 5432)
+#   - Redis 7 (port 6379)
+#   - MinIO object storage (API: 9000, Console: 9001)
+
+version: "3.9"
+
+services:
+  # ==========================================================================
+  # PostgreSQL 15 with PostGIS Extension
+  # ==========================================================================
+  postgres:
+    image: postgis/postgis:15-3.4
+    container_name: floatchat-postgres
+    environment:
+      POSTGRES_USER: floatchat
+      POSTGRES_PASSWORD: floatchat
+      POSTGRES_DB: floatchat
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U floatchat -d floatchat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # Redis 7
+  # ==========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: floatchat-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MinIO Object Storage (S3-compatible)
+  # ==========================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: floatchat-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================================================
+  # MinIO Client - Creates initial bucket on startup
+  # ==========================================================================
+  minio-setup:
+    image: minio/mc:latest
+    container_name: floatchat-minio-setup
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb myminio/floatchat-raw-uploads --ignore-existing;
+      mc anonymous set none myminio/floatchat-raw-uploads;
+      echo 'Bucket floatchat-raw-uploads created successfully';
+      exit 0;
+      "
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
