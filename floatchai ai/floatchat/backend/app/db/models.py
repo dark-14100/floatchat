@@ -13,6 +13,8 @@ Tables:
     6. ingestion_jobs - Job tracking
     7. ocean_regions - Named ocean basin polygons (Feature 2)
     8. dataset_versions - Dataset version audit log (Feature 2)
+    9. dataset_embeddings - Vector embeddings per dataset (Feature 3)
+    10. float_embeddings - Vector embeddings per float (Feature 3)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -24,6 +26,7 @@ from typing import Optional
 import uuid
 
 from geoalchemy2 import Geography
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -357,6 +360,76 @@ class DatasetVersion(Base):
 
     # Relationships
     dataset: Mapped["Dataset"] = relationship("Dataset", back_populates="versions")
+
+
+# =============================================================================
+# Table 9: dataset_embeddings (Feature 3)
+# =============================================================================
+class DatasetEmbedding(Base):
+    """
+    Vector embedding for a dataset's summary and metadata.
+
+    Used by the Metadata Search Engine for semantic similarity search.
+    One row per dataset — upserted on each indexing run.
+    """
+    __tablename__ = "dataset_embeddings"
+
+    embedding_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("datasets.dataset_id"), nullable=False, unique=True
+    )
+    embedding_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(1536), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        CheckConstraint("status IN ('indexed', 'embedding_failed')"),
+        nullable=False,
+        server_default="indexed",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # One-directional relationship — Dataset model is not modified
+    dataset: Mapped["Dataset"] = relationship("Dataset")
+
+
+# =============================================================================
+# Table 10: float_embeddings (Feature 3)
+# =============================================================================
+class FloatEmbedding(Base):
+    """
+    Vector embedding for a float's metadata and characteristics.
+
+    Used by the Metadata Search Engine for semantic similarity search.
+    One row per float — upserted on each indexing run.
+    """
+    __tablename__ = "float_embeddings"
+
+    embedding_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    float_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("floats.float_id"), nullable=False, unique=True
+    )
+    embedding_text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(1536), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        CheckConstraint("status IN ('indexed', 'embedding_failed')"),
+        nullable=False,
+        server_default="indexed",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # One-directional relationship — Float model is not modified
+    float_ref: Mapped["Float"] = relationship("Float")
 
 
 # =============================================================================

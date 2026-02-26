@@ -1,0 +1,23 @@
+# FloatChat — Custom PostgreSQL Image
+# Extends PostGIS with pgvector for vector similarity search (Feature 3)
+#
+# Base image: postgis/postgis:15-3.4 (PostgreSQL 15 + PostGIS 3.4)
+# Added: pgvector extension for embedding storage and HNSW indexing
+
+FROM postgis/postgis:15-3.4
+
+# Install build dependencies, compile and install pgvector, then clean up
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        postgresql-server-dev-15 \
+    && git clone --branch v0.7.4 https://github.com/pgvector/pgvector.git /tmp/pgvector \
+    && cd /tmp/pgvector \
+    && make \
+    && make install \
+    && rm -rf /tmp/pgvector \
+    && apt-get remove -y build-essential git postgresql-server-dev-15 \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*

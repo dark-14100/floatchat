@@ -1,8 +1,7 @@
 # FloatChat — Feature 1: Data Ingestion Pipeline
 ## Implementation Phases
 
-> **Status:** In Progress  
-> **Current Phase:** Phase 10 (awaiting approval)
+**Status:** In progress — Phases 1–9 complete, Phase 10 next
 
 ---
 

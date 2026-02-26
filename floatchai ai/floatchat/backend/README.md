@@ -113,6 +113,126 @@ All functions live in `app/db/dal.py`. Each accepts a SQLAlchemy `Session` as `d
 
 ---
 
+## Feature 3: Metadata Search Engine
+
+> _"The Metadata Search Engine enables semantic similarity search over datasets and floats, fuzzy region discovery, and dataset summaries — all without requiring SQL."_
+> — Feature 3 PRD §1.1
+
+Building on the ingestion pipeline and ocean database, Feature 3 adds **vector embeddings** (OpenAI `text-embedding-3-small`), **pgvector HNSW indexes**, **semantic search** with hybrid scoring, **fuzzy region matching** via `pg_trgm`, and **float discovery** functions — exposed through 6 REST API endpoints.
+
+### What Was Built
+
+| Component | Description |
+|-----------|-------------|
+| **pgvector Extension** | Custom `Dockerfile.postgres` extending `postgis/postgis:15-3.4` with pgvector. HNSW indexes (m=16, ef_construction=64) on both embedding tables. |
+| **Migration 003** | Creates `dataset_embeddings` and `float_embeddings` tables with `vector(1536)` columns, HNSW indexes using `vector_cosine_ops`. |
+| **Embeddings Module** | Centralized OpenAI API caller with batch support (`EMBEDDING_BATCH_SIZE=100`). Text builders for datasets and floats. The ONLY module that calls the embedding API (Hard Rule #18). |
+| **Indexer Module** | Builds embedding texts from DB records, pre-resolves region names via spatial queries, persists embeddings with `INSERT ... ON CONFLICT DO UPDATE`. Handles failures by setting `status='embedding_failed'`. |
+| **Search Module** | Semantic similarity search using pgvector `<=>` cosine distance. Hybrid scoring with recency boost (+0.05) and region match boost (+0.10). 3× candidate retrieval with threshold filtering. |
+| **Discovery Module** | Fuzzy region name resolution via `pg_trgm` `similarity()`. Float discovery by region (spatial) and by variable. Rich dataset summaries and lightweight summary cards. |
+| **Celery Task** | `index_dataset_task` with auto-retry for transient OpenAI errors. Refreshes both materialized views after indexing. Fire-and-forget trigger from ingestion pipeline. |
+| **API Router** | 6 endpoints at `/api/v1/search/` — semantic search, float discovery, dataset summaries, and admin reindex. |
+
+### Architecture
+
+```
+    Ingestion Pipeline (Feature 1)
+          │
+          │  ── job succeeded ──▶  index_dataset_task.delay()
+          │                              │
+          ▼                              ▼
+    PostgreSQL + PostGIS          Celery Worker (search queue)
+          │                              │
+          │                         ┌────┴────┐
+          │                         │ Indexer  │── build texts ──▶ Embeddings Module
+          │                         │         │                        │
+          │                         │         │◀── vectors ────── OpenAI API
+          │                         │         │                   (text-embedding-3-small)
+          │                         └────┬────┘
+          │                              │
+          │                    dataset_embeddings
+          │                    float_embeddings
+          │                    (pgvector HNSW indexes)
+          │                              │
+          ▼                              ▼
+    Search API ◀─── cosine distance (<=>)  ──── query embedding
+       │
+       ├─  GET /datasets          (semantic search)
+       ├─  GET /floats            (semantic search)
+       ├─  GET /floats/by-region  (spatial discovery)
+       ├─  GET /datasets/{id}/summary
+       ├─  GET /datasets/summaries
+       └─  POST /reindex/{id}     (admin only)
+```
+
+### Search API Endpoints
+
+All search endpoints are mounted at `/api/v1/search/`. GET endpoints are public; POST endpoints require admin JWT.
+
+#### `GET /api/v1/search/datasets`
+
+Semantic search over dataset embeddings.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | required | Natural language search query |
+| `limit` | int | 10 | Max results (capped at 50) |
+| `variable` | string | — | Filter by variable name |
+| `float_type` | string | — | Filter by float type |
+| `date_from` | ISO date | — | Filter datasets overlapping this date |
+| `date_to` | ISO date | — | Filter datasets overlapping this date |
+| `region_name` | string | — | Boost results matching this region |
+
+**Response 200:**
+```json
+[
+  {
+    "dataset_id": 1,
+    "name": "Argo Indian Ocean 2025",
+    "summary_text": "Temperature and salinity profiles...",
+    "score": 0.8723,
+    "date_range_start": "2025-01-01T00:00:00",
+    "date_range_end": "2025-06-30T00:00:00",
+    "float_count": 42,
+    "variable_list": {"temperature": true, "salinity": true}
+  }
+]
+```
+
+#### `GET /api/v1/search/floats`
+
+Semantic search over float embeddings.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | required | Natural language search query |
+| `limit` | int | 10 | Max results (capped at 50) |
+| `float_type` | string | — | Filter by float type |
+| `region_name` | string | — | Filter by deployment region |
+
+#### `GET /api/v1/search/floats/by-region`
+
+Discover floats whose latest position is within a named ocean region.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `region_name` | string | required | Region name (fuzzy-matched via pg_trgm) |
+| `float_type` | string | — | Optional filter: `core`, `BGC`, `deep` |
+
+#### `GET /api/v1/search/datasets/{dataset_id}/summary`
+
+Rich summary for a single active dataset including bbox as GeoJSON.
+
+#### `GET /api/v1/search/datasets/summaries`
+
+Lightweight summary cards for all active datasets. Summary text truncated to 300 chars.
+
+#### `POST /api/v1/search/reindex/{dataset_id}`
+
+**Requires admin JWT.** Re-embeds the dataset and all its floats, then refreshes materialized views.
+
+---
+
 ## Quick Start
 
 ### Prerequisites
@@ -154,9 +274,10 @@ cp .env.example .env
 alembic upgrade head
 ```
 
-This runs both migrations:
+This runs all three migrations:
 - **001** — Feature 1 schema (floats, profiles, measurements, datasets, float_positions, ingestion_jobs)
 - **002** — Feature 2 schema (BIGINT columns, ocean_regions, dataset_versions, indexes, materialized views, readonly user)
+- **003** — Feature 3 schema (pgvector extension, dataset_embeddings, float_embeddings, HNSW indexes)
 
 ### 5. Seed ocean regions
 
@@ -367,12 +488,22 @@ After all profiles are written, computes dataset statistics:
 | `SENTRY_DSN` | — | Optional: Sentry error tracking |
 | `DEBUG` | `False` | Enables `/docs` Swagger UI |
 | `LOG_LEVEL` | `INFO` | structlog level |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model name |
+| `EMBEDDING_DIMENSIONS` | `1536` | Embedding vector dimensions |
+| `EMBEDDING_BATCH_SIZE` | `100` | Max texts per embedding API call |
+| `SEARCH_SIMILARITY_THRESHOLD` | `0.3` | Min cosine similarity to include in results |
+| `SEARCH_DEFAULT_LIMIT` | `10` | Default search result limit |
+| `SEARCH_MAX_LIMIT` | `50` | Maximum allowed search result limit |
+| `RECENCY_BOOST_DAYS` | `90` | Datasets ingested within this many days get a score boost |
+| `RECENCY_BOOST_VALUE` | `0.05` | Score boost for recent datasets |
+| `REGION_MATCH_BOOST_VALUE` | `0.10` | Score boost when region filter matches bbox |
+| `FUZZY_MATCH_THRESHOLD` | `0.4` | pg_trgm similarity threshold for region name matching |
 
 ---
 
 ## Database Schema
 
-8 tables + 2 materialized views created via Alembic migrations (`001_initial_schema.py` + `002_ocean_database.py`). PostGIS and pgcrypto extensions enabled.
+10 tables + 2 materialized views created via Alembic migrations (`001_initial_schema.py` + `002_ocean_database.py` + `003_metadata_search.py`). PostGIS, pgcrypto, pgvector, and pg_trgm extensions enabled.
 
 ### `floats`
 One record per unique ARGO float, keyed by `platform_number`.
@@ -492,10 +623,38 @@ Version history for datasets.
 
 | View | Description | Refresh |
 |------|-------------|---------|
-| `mv_float_latest_position` | Latest position per float (platform_number, lat, lon, timestamp) | After each ingestion run |
-| `mv_dataset_stats` | Per-dataset aggregates (profile count, date range, float count) | After each ingestion run |
+| `mv_float_latest_position` | Latest position per float (platform_number, lat, lon, timestamp) | After each ingestion run + after indexing |
+| `mv_dataset_stats` | Per-dataset aggregates (profile count, date range, float count) | After each ingestion run + after indexing |
 
 Both are queried directly by the DAL — never recomputed inline.
+
+### `dataset_embeddings` _(Feature 3)_
+One row per dataset, upserted on each indexing run.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `embedding_id` | `SERIAL PK` | |
+| `dataset_id` | `FK → datasets UNIQUE` | One embedding per dataset |
+| `embedding_text` | `TEXT NOT NULL` | Combined summary + descriptor |
+| `embedding` | `vector(1536) NOT NULL` | OpenAI text-embedding-3-small |
+| `status` | `VARCHAR(20)` | `indexed` or `embedding_failed` |
+| `created_at`, `updated_at` | `TIMESTAMPTZ` | Auto-set |
+
+**Index:** HNSW on `embedding` with `vector_cosine_ops` (m=16, ef_construction=64).
+
+### `float_embeddings` _(Feature 3)_
+One row per float, upserted on each indexing run.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `embedding_id` | `SERIAL PK` | |
+| `float_id` | `FK → floats UNIQUE` | One embedding per float |
+| `embedding_text` | `TEXT NOT NULL` | Float type + region + variables |
+| `embedding` | `vector(1536) NOT NULL` | OpenAI text-embedding-3-small |
+| `status` | `VARCHAR(20)` | `indexed` or `embedding_failed` |
+| `created_at`, `updated_at` | `TIMESTAMPTZ` | Auto-set |
+
+**Index:** HNSW on `embedding` with `vector_cosine_ops` (m=16, ef_construction=64).
 
 ---
 
@@ -525,19 +684,21 @@ backend/
 ├── alembic/                    # Database migrations
 │   └── versions/
 │       ├── 001_initial_schema.py
-│       └── 002_ocean_database.py     # Feature 2: BIGINT, ocean_regions, MVs, indexes
+│       ├── 002_ocean_database.py     # Feature 2: BIGINT, ocean_regions, MVs, indexes
+│       └── 003_metadata_search.py    # Feature 3: pgvector, embedding tables, HNSW indexes
 ├── app/
 │   ├── main.py                 # FastAPI app, structlog, Sentry, /health
-│   ├── config.py               # pydantic-settings (26 env vars)
-│   ├── celery_app.py           # Celery configuration
+│   ├── config.py               # pydantic-settings (36 env vars)
+│   ├── celery_app.py           # Celery configuration (ingestion + search tasks)
 │   ├── api/
 │   │   ├── auth.py             # JWT validation (admin role required)
 │   │   └── v1/
-│   │       └── ingestion.py    # Upload + job management (4 endpoints)
+│   │       ├── ingestion.py    # Upload + job management (4 endpoints)
+│   │       └── search.py       # Feature 3: Search + discovery (6 endpoints)
 │   ├── cache/                  # Feature 2
 │   │   └── redis_cache.py      # Query result cache (get/set/invalidate)
 │   ├── db/
-│   │   ├── models.py           # SQLAlchemy 2.x ORM (8 tables + 2 MV table objects)
+│   │   ├── models.py           # SQLAlchemy 2.x ORM (10 tables + 2 MV table objects)
 │   │   ├── session.py          # Engine, SessionLocal, get_db(), readonly engine, get_readonly_db()
 │   │   └── dal.py              # Feature 2: Data Access Layer (10 query functions)
 │   ├── ingestion/
@@ -545,7 +706,13 @@ backend/
 │   │   ├── cleaner.py          # Outlier flagging & normalization
 │   │   ├── writer.py           # Idempotent DB upserts
 │   │   ├── metadata.py         # Dataset stats + LLM summary
-│   │   └── tasks.py            # Celery task definitions
+│   │   └── tasks.py            # Celery task definitions (+ search indexing trigger)
+│   ├── search/                 # Feature 3: Metadata Search Engine
+│   │   ├── embeddings.py       # OpenAI embedding API caller + text builders
+│   │   ├── indexer.py          # DB → embedding text → upsert to embedding tables
+│   │   ├── search.py           # Semantic search with hybrid scoring
+│   │   ├── discovery.py        # Fuzzy region matching + float discovery + summaries
+│   │   └── tasks.py            # Celery task: index_dataset_task
 │   └── storage/
 │       └── s3.py               # S3/MinIO upload, download, presign
 ├── pgbouncer/                  # Feature 2
@@ -572,7 +739,10 @@ backend/
 │   ├── test_integration.py     # 15 pipeline integration tests
 │   ├── test_schema.py          # 30 schema tests (Feature 2, requires Docker)
 │   ├── test_dal.py             # 21 DAL tests (Feature 2, requires Docker)
-│   └── test_cache.py           # 11 cache tests (Feature 2, requires Redis)
+│   ├── test_cache.py           # 11 cache tests (Feature 2, requires Redis)
+│   ├── test_embeddings.py      # 18 tests (Feature 3: text builders, batching, indexer)
+│   ├── test_search.py          # 12 tests (Feature 3: scoring, filtering, limits)
+│   └── test_discovery.py       # 18 tests (Feature 3: fuzzy match, discovery, summaries)
 ├── requirements.txt
 └── alembic.ini
 ```
@@ -591,6 +761,9 @@ backend/
 | Migrations | Alembic |
 | PostGIS ORM | GeoAlchemy2 |
 | Geometry | Shapely |
+| Vector embeddings | pgvector (PostgreSQL extension) |
+| Embedding API | openai (text-embedding-3-small) |
+| Vector ORM | pgvector.sqlalchemy |
 | Task queue | Celery |
 | Broker / Cache | Redis (redis-py) |
 | NetCDF parsing | xarray + netCDF4 |
@@ -637,14 +810,29 @@ pytest tests/test_schema.py tests/test_dal.py tests/test_cache.py -v
 
 **Important:** Feature 2 schema and DAL tests require Docker to be running (`docker-compose up -d`). When Docker is not available, these tests **skip gracefully** with `PostgreSQL not available: connection refused` — they do not fail. Cache tests require Redis.
 
+### Feature 3 Tests (no Docker required)
+
+```bash
+# All Feature 3 tests (48 tests)
+pytest tests/test_embeddings.py tests/test_search.py tests/test_discovery.py -v
+```
+
+| Test File | Count | Covers |
+|-----------|-------|--------|
+| `test_embeddings.py` | 18 | Text builders, batch API calls, indexer failure handling |
+| `test_search.py` | 12 | Score sorting, threshold filtering, recency boost, limits |
+| `test_discovery.py` | 18 | Fuzzy region matching, float discovery, dataset summaries |
+
+Feature 3 tests use **mocks** for OpenAI API calls and database access — no Docker or API keys required.
+
 ### Full Suite
 
 ```bash
-# All tests (164 tests: 102 Feature 1 + 62 Feature 2)
+# All tests (212 tests: 102 Feature 1 + 62 Feature 2 + 48 Feature 3)
 pytest tests/ -v
 ```
 
-When Docker is running: **164 passed, 0 failed**. When Docker is off: **113 passed, 51 skipped** (PG-dependent tests skip).
+When Docker is running: **212 passed, 0 failed**. When Docker is off: **161 passed, 58 skipped** (PG-dependent tests skip).
 
 ---
 
@@ -686,6 +874,18 @@ These invariants are enforced across the codebase:
 16. **Always use `pool_pre_ping=True` on SQLAlchemy engines.** Stale connections must never cause failures.
 17. **Materialized views must be queried directly — never recomputed inline.** Use `refresh_materialized_views()` after ingestion.
 
+### Feature 3 Hard Rules
+
+18. **`embeddings.py` is the only file that calls the OpenAI embedding API.** No other module creates embeddings.
+19. **Never embed texts one at a time in a loop.** Always batch via `embed_texts()` (Hard Rule #2 for embeddings).
+20. **Embedding failures must never crash the pipeline.** Set `status='embedding_failed'` and continue.
+21. **Always use the `<=>` cosine distance operator for vector search.** Never `<->` (L2) or `<#>` (inner product).
+22. **Never return search results below `SEARCH_SIMILARITY_THRESHOLD`.** Empty list is a valid response.
+23. **Never use HNSW with `op.create_index()`.** HNSW indexes require raw SQL via `op.execute()`.
+24. **`resolve_region_name()` is the sole entry point for region name resolution.** No other function may query `ocean_regions` by name directly.
+25. **Never expose the reindex endpoint without admin authentication.** All write endpoints require admin JWT.
+26. **Never log embedding vectors.** Only log metadata (text count, tokens, time).
+
 ---
 
 ## Release Plan
@@ -694,6 +894,7 @@ These invariants are enforced across the codebase:
 |-------|-------|--------|
 | Phase 1 | Data ingestion & database | ✅ Complete |
 | Phase 2 | Ocean data database & query infrastructure | ✅ Complete |
-| Phase 3 | AI query layer | Planned |
-| Phase 4 | Chat UI & visualizations | Planned |
-| Phase 5 | Public prototype | Planned |
+| Phase 3 | Metadata search engine | ✅ Complete |
+| Phase 4 | AI query layer | Planned |
+| Phase 5 | Chat UI & visualizations | Planned |
+| Phase 6 | Public prototype | Planned |

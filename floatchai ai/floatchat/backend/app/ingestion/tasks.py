@@ -298,6 +298,21 @@ def ingest_file_task(
         )
         db.commit()
 
+        # =============================================================
+        # Step 9: Enqueue post-ingestion search indexing (fire-and-forget)
+        # =============================================================
+        try:
+            from app.search.tasks import index_dataset_task
+            index_dataset_task.delay(dataset_id=dataset_id)
+            log.info("search_indexing_enqueued", dataset_id=dataset_id)
+        except Exception as idx_err:
+            # Indexing failure must never fail the ingestion job
+            log.warning(
+                "search_indexing_enqueue_failed",
+                dataset_id=dataset_id,
+                error=str(idx_err),
+            )
+
         summary = {
             "success": True,
             "job_id": job_id,

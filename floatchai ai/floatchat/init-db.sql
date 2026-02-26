@@ -4,6 +4,7 @@
 -- Enable required PostgreSQL extensions
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Verify extensions are installed
 DO $$
@@ -13,6 +14,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto') THEN
         RAISE EXCEPTION 'pgcrypto extension failed to install';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+        RAISE EXCEPTION 'pgvector extension failed to install';
     END IF;
     RAISE NOTICE 'All required extensions installed successfully';
 END $$;

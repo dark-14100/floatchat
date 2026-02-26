@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     SENTRY_DSN: Optional[str] = None  # Optional - disabled if not set
     
     # =========================================================================
+    # Metadata Search Engine (Feature 3)
+    # =========================================================================
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIMENSIONS: int = 1536
+    EMBEDDING_BATCH_SIZE: int = 100
+    SEARCH_SIMILARITY_THRESHOLD: float = 0.3
+    SEARCH_DEFAULT_LIMIT: int = 10
+    SEARCH_MAX_LIMIT: int = 50
+    RECENCY_BOOST_DAYS: int = 90
+    RECENCY_BOOST_VALUE: float = 0.05
+    REGION_MATCH_BOOST_VALUE: float = 0.10
+    FUZZY_MATCH_THRESHOLD: float = 0.4
+    
+    # =========================================================================
     # Application
     # =========================================================================
     DEBUG: bool = False

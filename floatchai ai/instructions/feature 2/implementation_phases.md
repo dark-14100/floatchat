@@ -1,8 +1,7 @@
 # FloatChat — Feature 2: Ocean Data Database
 ## Implementation Phases
 
-> **Status:** In Progress  
-> **Current Phase:** Phase 9 ✅ → Phase 10 next
+**Status:** Complete — all 10 phases done
 
 ---
 
@@ -19,7 +18,7 @@
 | 7 | Data Access Layer (DAL) | ✅ Complete | `app/db/dal.py` (10 functions) |
 | 8 | Ocean Region Seed Data & Scripts | ✅ Complete | `seed_ocean_regions.py`, GeoJSON, readonly SQL |
 | 9 | Tests | ✅ Complete | `test_schema.py`, `test_dal.py`, `test_cache.py`, `conftest_feature2.py` |
-| 10 | Documentation | ⬜ Not Started | `README.md` Feature 2 section |
+| 10 | Documentation | ✅ Complete | `README.md` Feature 2 section |
 
 ---
 
