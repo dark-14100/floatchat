@@ -1,0 +1,2 @@
+"floatchat" "floatchat"
+"floatchat_readonly" "floatchat_readonly"

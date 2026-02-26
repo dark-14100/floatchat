@@ -28,9 +28,11 @@ if config.config_file_name is not None:
 # Set target metadata for autogenerate support
 target_metadata = Base.metadata
 
-# Read DATABASE_URL from environment
+# Read DATABASE_URL_DIRECT from environment (port 5432 — bypasses PgBouncer)
+# Alembic must connect directly to PostgreSQL because PgBouncer's transaction
+# pooling mode does not support DDL operations.
 DATABASE_URL = os.getenv(
-    "DATABASE_URL",
+    "DATABASE_URL_DIRECT",
     "postgresql+psycopg2://floatchat:floatchat@localhost:5432/floatchat"
 )
 

@@ -8,6 +8,11 @@ Provides:
 - Fixture file paths
 """
 
+# Register Feature 2 fixtures (PostgreSQL+PostGIS, Redis).
+# These fixtures are only activated when a test requests them;
+# Feature 1 SQLite-based tests are completely unaffected.
+pytest_plugins = ["tests.conftest_feature2"]
+
 import os
 from pathlib import Path
 from typing import Generator
@@ -62,11 +67,17 @@ def test_engine():
         connect_args={"check_same_thread": False},
     )
     # SQLite needs foreign key enforcement enabled explicitly
+    # Also register stub PostGIS functions so GeoAlchemy2 INSERT/SELECT works
     @event.listens_for(engine, "connect")
     def set_sqlite_pragma(dbapi_conn, connection_record):
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+        # Register stub PostGIS functions that GeoAlchemy2 generates
+        dbapi_conn.create_function("ST_GeogFromText", 1, lambda x: x)
+        dbapi_conn.create_function("ST_AsEWKB", 1, lambda x: x)
+        dbapi_conn.create_function("ST_GeomFromEWKT", 1, lambda x: x)
 
     return engine
 

@@ -29,7 +29,17 @@ class Settings(BaseSettings):
     # =========================================================================
     # Database
     # =========================================================================
-    DATABASE_URL: str = "postgresql+psycopg2://floatchat:floatchat@localhost:5432/floatchat"
+    DATABASE_URL: str = "postgresql+psycopg2://floatchat:floatchat@localhost:5433/floatchat"
+    DATABASE_URL_DIRECT: str = "postgresql+psycopg2://floatchat:floatchat@localhost:5432/floatchat"
+    READONLY_DATABASE_URL: str = "postgresql+psycopg2://floatchat_readonly:floatchat_readonly@localhost:5433/floatchat"
+    READONLY_DB_PASSWORD: str = "floatchat_readonly"
+    
+    # =========================================================================
+    # Connection Pool (SQLAlchemy)
+    # =========================================================================
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE: int = 3600
     
     # =========================================================================
     # Redis / Celery
@@ -37,6 +47,12 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    
+    # =========================================================================
+    # Redis Cache (Feature 2)
+    # =========================================================================
+    REDIS_CACHE_TTL_SECONDS: int = 300  # 5-minute TTL for query result cache
+    REDIS_CACHE_MAX_ROWS: int = 10000  # Do not cache results larger than this
     
     # =========================================================================
     # S3 / MinIO Object Storage

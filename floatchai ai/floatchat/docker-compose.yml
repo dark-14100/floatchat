@@ -71,6 +71,22 @@ services:
     restart: unless-stopped
 
   # ==========================================================================
+  # PgBouncer Connection Pooler
+  # ==========================================================================
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: floatchat-pgbouncer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5433:5433"
+    volumes:
+      - ./backend/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./backend/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    restart: unless-stopped
+
+  # ==========================================================================
   # MinIO Client - Creates initial bucket on startup
   # ==========================================================================
   minio-setup:
