@@ -102,6 +102,30 @@ class Settings(BaseSettings):
     FUZZY_MATCH_THRESHOLD: float = 0.4
     
     # =========================================================================
+    # Natural Language Query Engine (Feature 4)
+    # =========================================================================
+    QUERY_LLM_PROVIDER: str = "deepseek"  # deepseek | qwen | gemma | openai
+    QUERY_LLM_MODEL: str = "deepseek-reasoner"
+    QUERY_LLM_TEMPERATURE: float = 0.0
+    QUERY_LLM_MAX_TOKENS: int = 2048
+    QUERY_MAX_RETRIES: int = 3
+    QUERY_MAX_ROWS: int = 1000
+    QUERY_CONFIRMATION_THRESHOLD: int = 50000
+    QUERY_CONTEXT_TTL: int = 3600
+    QUERY_CONTEXT_MAX_TURNS: int = 20
+    QUERY_BENCHMARK_TIMEOUT: int = 60  # Total timeout (seconds) for benchmark endpoint
+    GEOGRAPHY_FILE_PATH: str = "data/geography_lookup.json"
+    
+    # Provider-specific API keys and base URLs
+    DEEPSEEK_API_KEY: Optional[str] = None
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    QWEN_API_KEY: Optional[str] = None
+    QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    GEMMA_API_KEY: Optional[str] = None
+    GEMMA_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    # OPENAI_API_KEY already defined above in LLM section
+    
+    # =========================================================================
     # Application
     # =========================================================================
     DEBUG: bool = False

@@ -160,6 +160,8 @@ async def health_check() -> JSONResponse:
 # =============================================================================
 from app.api.v1.ingestion import router as ingestion_router
 from app.api.v1.search import router as search_router
+from app.api.v1.query import router as query_router
 
 app.include_router(ingestion_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1/search")
+app.include_router(query_router, prefix="/api/v1")

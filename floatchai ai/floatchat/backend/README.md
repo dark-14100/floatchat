@@ -378,6 +378,187 @@ No authentication required. Returns `{"status": "ok"}`.
 
 ---
 
+## Feature 4: Natural Language Query Engine
+
+> _"The NL Query Engine converts natural language questions about ocean data into validated, read-only PostgreSQL queries — executed safely on a readonly connection."_
+> — Feature 4 PRD §1.1
+
+Building on Features 1–3, Feature 4 adds a **multi-provider LLM pipeline** (DeepSeek, Qwen, Gemma, OpenAI), **SQL validation** (syntax + read-only + whitelist), **geography resolution**, **conversation context** via Redis, and a **benchmarking endpoint** — exposed through 2 REST API endpoints.
+
+### What Was Built
+
+| Component | Description |
+|-----------|-------------|
+| **Schema Prompt** | Module-level constant documenting all 10 tables + 2 MVs with types, FKs, JOIN patterns, and 25 few-shot examples. Sent as the LLM system message. |
+| **Geography Module** | Scans NL queries for 50 ocean region names (oceans, seas, gulfs, straits). Returns bounding boxes for spatial `ST_MakeEnvelope` queries. |
+| **Context Module** | Redis-backed conversation history (get/append/clear). Graceful no-op when Redis is unavailable. |
+| **Validator Module** | 3-check SQL validation: syntax (sqlglot parse), read-only (AST walk), table whitelist. Plus advisory geography cast warning. |
+| **Executor Module** | Safe SQL execution on `get_readonly_db()`. Auto-wraps with LIMIT via subquery. Row estimation via `EXPLAIN (FORMAT JSON)`. |
+| **Pipeline Module** | Core LLM orchestration — ALL LLM calls live here. Prompt assembly → LLM call → SQL extraction → validation → retry loop (max 3). Separate interpretation call. |
+| **Multi-Provider LLM** | 4 providers via OpenAI-compatible API: DeepSeek (`deepseek-reasoner`), Qwen (`qwq-32b`), Gemma (`gemma3`), OpenAI (`gpt-4o`). Factory pattern with provider-specific base URLs and API keys. |
+| **API Router** | 2 endpoints: `POST /query` (full flow with execution) and `POST /query/benchmark` (SQL generation across providers, no execution). |
+
+### Architecture
+
+```
+    User: "How many BGC floats are in the Arabian Sea?"
+          │
+          ▼
+    POST /api/v1/query
+          │
+          ├─ 1. Geography resolution (→ bounding box)
+          ├─ 2. Conversation context (Redis)
+          ├─ 3. NL-to-SQL pipeline
+          │     ├─ Build prompt (schema + context + geography + few-shot)
+          │     ├─ LLM call (OpenAI-compatible API)
+          │     ├─ Extract SQL from response
+          │     ├─ 3-check validation (syntax → read-only → whitelist)
+          │     └─ Retry loop (up to 3 attempts with error injection)
+          ├─ 4. Row estimation (EXPLAIN JSON) → confirmation if >50K rows
+          ├─ 5. Execute SQL (readonly session, LIMIT wrapped)
+          ├─ 6. Interpret results (separate LLM call)
+          └─ 7. Store context (after execution with real row_count)
+          │
+          ▼
+    JSON response: { sql, columns, rows, interpretation, ... }
+```
+
+### Query API Endpoints
+
+All query endpoints are mounted at `/api/v1/query/`.
+
+#### `POST /api/v1/query`
+
+Full NL-to-SQL pipeline: generate SQL → validate → execute → interpret.
+
+**Request body:**
+```json
+{
+  "query": "How many BGC floats are deployed in the Arabian Sea?",
+  "session_id": "optional-session-uuid",
+  "provider": "deepseek",
+  "model": null,
+  "confirm_execution": null
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | string | required | Natural language question (1–2000 chars) |
+| `session_id` | string | auto-generated | Session ID for conversation context |
+| `provider` | string | config default | Override LLM provider |
+| `model` | string | provider default | Override LLM model |
+| `confirm_execution` | bool | null | Set `true` to confirm large result execution |
+
+**Response 200:**
+```json
+{
+  "session_id": "a1b2c3d4-...",
+  "sql": "SELECT COUNT(*) FROM floats WHERE float_type = 'BGC' ...",
+  "columns": ["count"],
+  "rows": [{"count": 42}],
+  "row_count": 1,
+  "truncated": false,
+  "interpretation": "There are 42 BGC floats deployed in the Arabian Sea.",
+  "confirmation_required": null,
+  "estimated_rows": null,
+  "error": null,
+  "provider": "deepseek",
+  "model": "deepseek-reasoner"
+}
+```
+
+**Confirmation flow:** If `EXPLAIN` estimates >50,000 rows, the response includes `confirmation_required: true` and `estimated_rows`. Re-send the same request with `confirm_execution: true` to proceed.
+
+#### `POST /api/v1/query/benchmark`
+
+Compare SQL generation across multiple LLM providers. **SQL generation only — no execution.**
+
+**Request body:**
+```json
+{
+  "query": "Show all floats deployed after 2024",
+  "providers": ["deepseek", "qwen", "openai"]
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `query` | string | required | Natural language question |
+| `providers` | list[string] | all configured | Providers to benchmark |
+
+**Response 200:**
+```json
+{
+  "query": "Show all floats deployed after 2024",
+  "results": [
+    {
+      "provider": "deepseek",
+      "model": "deepseek-reasoner",
+      "sql": "SELECT * FROM floats WHERE ...",
+      "valid": true,
+      "validation_errors": [],
+      "latency_ms": 1234.5,
+      "error": null
+    },
+    {
+      "provider": "qwen",
+      "model": "qwq-32b",
+      "sql": "SELECT * FROM floats WHERE ...",
+      "valid": true,
+      "validation_errors": [],
+      "latency_ms": 2345.6,
+      "error": null
+    }
+  ]
+}
+```
+
+### Multi-Provider LLM System
+
+All 4 providers use the OpenAI-compatible chat completions API. The `get_llm_client()` factory creates the appropriate client based on provider name.
+
+| Provider | Default Model | Base URL | Key Setting |
+|----------|--------------|----------|-------------|
+| `deepseek` | `deepseek-reasoner` | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
+| `qwen` | `qwq-32b` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_API_KEY` |
+| `gemma` | `gemma3` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMMA_API_KEY` |
+| `openai` | `gpt-4o` | default OpenAI URL | `OPENAI_API_KEY` |
+
+### SQL Validation Pipeline
+
+Every generated SQL statement passes through 3 mandatory checks before execution:
+
+1. **Syntax check** — Parsed with `sqlglot` (PostgreSQL dialect). Must produce a valid AST.
+2. **Read-only check** — AST walked for write nodes (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `MERGE`, `TRUNCATE`, `GRANT`, `REVOKE`). Any match → rejected.
+3. **Table whitelist** — All referenced tables must be in the allowed set (10 tables + 2 MVs). CTE aliases are excluded from the check.
+
+If validation fails, the error is injected back into the prompt and the LLM retries (up to `QUERY_MAX_RETRIES` attempts). After all retries are exhausted, the query is **never executed** — a structured error is returned.
+
+### Feature 4 Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `QUERY_LLM_PROVIDER` | string | `deepseek` | Default LLM provider |
+| `QUERY_LLM_MODEL` | string | `deepseek-reasoner` | Default model for the chosen provider |
+| `QUERY_LLM_TEMPERATURE` | float | `0.0` | LLM temperature |
+| `QUERY_LLM_MAX_TOKENS` | int | `2048` | Max tokens per LLM response |
+| `QUERY_MAX_RETRIES` | int | `3` | Max validation retry attempts |
+| `QUERY_MAX_ROWS` | int | `1000` | Max rows returned in response |
+| `QUERY_CONFIRMATION_THRESHOLD` | int | `50000` | Estimated rows that trigger confirmation |
+| `QUERY_CONTEXT_TTL` | int | `3600` | Conversation context TTL (seconds) |
+| `QUERY_CONTEXT_MAX_TURNS` | int | `20` | Max turns in conversation history |
+| `QUERY_BENCHMARK_TIMEOUT` | int | `60` | Total timeout for benchmark endpoint (seconds) |
+| `GEOGRAPHY_FILE_PATH` | string | `data/geography_lookup.json` | Path to geography lookup file |
+| `DEEPSEEK_API_KEY` | string | None | DeepSeek API key |
+| `DEEPSEEK_BASE_URL` | string | `https://api.deepseek.com/v1` | DeepSeek API base URL |
+| `QWEN_API_KEY` | string | None | Qwen API key |
+| `QWEN_BASE_URL` | string | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Qwen API base URL |
+| `GEMMA_API_KEY` | string | None | Gemma API key |
+| `GEMMA_BASE_URL` | string | `https://generativelanguage.googleapis.com/v1beta/openai` | Gemma API base URL |
+
+---
+
 ## Pipeline Modules
 
 ### Parser (`app/ingestion/parser.py`)
@@ -688,13 +869,14 @@ backend/
 │       └── 003_metadata_search.py    # Feature 3: pgvector, embedding tables, HNSW indexes
 ├── app/
 │   ├── main.py                 # FastAPI app, structlog, Sentry, /health
-│   ├── config.py               # pydantic-settings (36 env vars)
+│   ├── config.py               # pydantic-settings (54 env vars)
 │   ├── celery_app.py           # Celery configuration (ingestion + search tasks)
 │   ├── api/
 │   │   ├── auth.py             # JWT validation (admin role required)
 │   │   └── v1/
 │   │       ├── ingestion.py    # Upload + job management (4 endpoints)
-│   │       └── search.py       # Feature 3: Search + discovery (6 endpoints)
+│   │       ├── search.py       # Feature 3: Search + discovery (6 endpoints)
+│   │       └── query.py        # Feature 4: NL query + benchmark (2 endpoints)
 │   ├── cache/                  # Feature 2
 │   │   └── redis_cache.py      # Query result cache (get/set/invalidate)
 │   ├── db/
@@ -707,6 +889,13 @@ backend/
 │   │   ├── writer.py           # Idempotent DB upserts
 │   │   ├── metadata.py         # Dataset stats + LLM summary
 │   │   └── tasks.py            # Celery task definitions (+ search indexing trigger)
+│   ├── query/                  # Feature 4: Natural Language Query Engine
+│   │   ├── schema_prompt.py    # SCHEMA_PROMPT constant + ALLOWED_TABLES set
+│   │   ├── geography.py        # Geography name → bounding box resolution
+│   │   ├── context.py          # Redis-backed conversation context
+│   │   ├── validator.py        # 3-check SQL validation (syntax, read-only, whitelist)
+│   │   ├── executor.py         # Safe SQL execution + row estimation
+│   │   └── pipeline.py         # LLM orchestration (4 providers) + interpretation
 │   ├── search/                 # Feature 3: Metadata Search Engine
 │   │   ├── embeddings.py       # OpenAI embedding API caller + text builders
 │   │   ├── indexer.py          # DB → embedding text → upsert to embedding tables
@@ -723,6 +912,8 @@ backend/
 │   ├── create_readonly_user.sql # SQL for floatchat_readonly user
 │   └── data/
 │       └── ocean_regions.geojson
+├── data/                       # Feature 4
+│   └── geography_lookup.json   # 50 ocean region bounding boxes
 ├── celery_worker.py            # Celery worker entry point
 ├── tests/
 │   ├── conftest.py             # Test fixture registration
@@ -742,7 +933,12 @@ backend/
 │   ├── test_cache.py           # 11 cache tests (Feature 2, requires Redis)
 │   ├── test_embeddings.py      # 18 tests (Feature 3: text builders, batching, indexer)
 │   ├── test_search.py          # 12 tests (Feature 3: scoring, filtering, limits)
-│   └── test_discovery.py       # 18 tests (Feature 3: fuzzy match, discovery, summaries)
+│   ├── test_discovery.py       # 18 tests (Feature 3: fuzzy match, discovery, summaries)
+│   ├── test_validator.py       # 33 tests (Feature 4: syntax, readonly, whitelist, CTE)
+│   ├── test_executor.py        # 19 tests (Feature 4: execution, LIMIT, estimation)
+│   ├── test_geography.py       # 17 tests (Feature 4: geography resolution)
+│   ├── test_context.py         # 15 tests (Feature 4: Redis context operations)
+│   └── test_pipeline_f4.py     # 13 tests (Feature 4: LLM pipeline, extraction, retry)
 ├── requirements.txt
 └── alembic.ini
 ```
@@ -772,9 +968,11 @@ backend/
 | Structured logging | structlog |
 | Error tracking | sentry-sdk |
 | Config | pydantic-settings |
+| SQL parsing/validation | sqlglot |
 | LLM summaries | openai (GPT-4o) |
+| NL-to-SQL LLM | openai (multi-provider: DeepSeek, Qwen, Gemma, OpenAI) |
 | Auth | python-jose (JWT) |
-| Testing | pytest + httpx |
+| Testing | pytest + pytest-asyncio + httpx |
 
 ---
 
@@ -825,14 +1023,31 @@ pytest tests/test_embeddings.py tests/test_search.py tests/test_discovery.py -v
 
 Feature 3 tests use **mocks** for OpenAI API calls and database access — no Docker or API keys required.
 
+### Feature 4 Tests (no Docker required)
+
+```bash
+# All Feature 4 tests (97 tests)
+pytest tests/test_validator.py tests/test_executor.py tests/test_geography.py tests/test_context.py tests/test_pipeline_f4.py -v
+```
+
+| Test File | Count | Covers |
+|-----------|-------|--------|
+| `test_validator.py` | 33 | Syntax check, read-only AST walk, table whitelist, CTE handling, geography cast |
+| `test_executor.py` | 19 | LIMIT detection/wrapping, SQL execution, row estimation |
+| `test_geography.py` | 17 | Region resolution, case insensitivity, longest-match, reload |
+| `test_context.py` | 15 | Get/append/clear context, TTL, max turns, None Redis |
+| `test_pipeline_f4.py` | 13 | LLM client factory, SQL extraction, retry loop, provider override |
+
+Feature 4 tests use **mocks** for all LLM calls and Redis — no Docker, API keys, or database required.
+
 ### Full Suite
 
 ```bash
-# All tests (212 tests: 102 Feature 1 + 62 Feature 2 + 48 Feature 3)
+# All tests (309 tests: 102 Feature 1 + 62 Feature 2 + 48 Feature 3 + 97 Feature 4)
 pytest tests/ -v
 ```
 
-When Docker is running: **212 passed, 0 failed**. When Docker is off: **161 passed, 58 skipped** (PG-dependent tests skip).
+When Docker is running: **309 passed, 0 failed**. When Docker is off: **258 passed, 58 skipped** (PG-dependent tests skip).
 
 ---
 
@@ -886,6 +1101,19 @@ These invariants are enforced across the codebase:
 25. **Never expose the reindex endpoint without admin authentication.** All write endpoints require admin JWT.
 26. **Never log embedding vectors.** Only log metadata (text count, tokens, time).
 
+### Feature 4 Hard Rules
+
+27. **Never execute SQL before validation passes.** All 3 checks (syntax, read-only, whitelist) must pass.
+28. **Always use `get_readonly_db()` for query execution.** Never `get_db()`.
+29. **Schema prompt is a module-level constant.** Never built dynamically per request.
+30. **Read-only enforcement via AST walk, not string matching.** `sqlglot` expression tree, not regex.
+31. **Never block on interpretation failure.** Return template fallback.
+32. **Never block on Redis unavailability.** Query engine continues without context.
+33. **All LLM calls live in `pipeline.py` only.** No other module calls the LLM API.
+34. **Original SQL is never modified after validation.** LIMIT is applied via subquery wrapper.
+35. **Longitude before latitude in `ST_MakePoint`.** `ST_MakePoint(lon, lat)`, never `(lat, lon)`.
+36. **After 3 failed validations, return error — never execute.** Hard stop, no exceptions.
+
 ---
 
 ## Release Plan
@@ -895,6 +1123,6 @@ These invariants are enforced across the codebase:
 | Phase 1 | Data ingestion & database | ✅ Complete |
 | Phase 2 | Ocean data database & query infrastructure | ✅ Complete |
 | Phase 3 | Metadata search engine | ✅ Complete |
-| Phase 4 | AI query layer | Planned |
+| Phase 4 | AI query layer | ✅ Complete |
 | Phase 5 | Chat UI & visualizations | Planned |
 | Phase 6 | Public prototype | Planned |
