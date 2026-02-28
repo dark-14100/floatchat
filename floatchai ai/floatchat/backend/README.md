@@ -559,6 +559,75 @@ If validation fails, the error is injected back into the prompt and the LLM retr
 
 ---
 
+## Feature 5: Conversational Chat Interface
+
+> _"Feature 5 wraps Feature 4's power in a conversational interface that feels familiar, approachable, and intelligent."_
+> — Feature 5 PRD §1.2
+
+Feature 5 adds a chat backend with session management, SSE streaming, message persistence, and suggestion generation. The frontend is a separate Next.js 14 application (see `../frontend/README.md`).
+
+### What Was Built (Backend)
+
+| Component | Description |
+|-----------|-------------|
+| **Migration 004** | Creates `chat_sessions` and `chat_messages` tables with FK, index on `(session_id, created_at)` |
+| **Chat Router** | 9 endpoints at `/api/v1/chat/`: session CRUD, message history, SSE query, confirmation, suggestions |
+| **Suggestions Module** | `generate_load_time_suggestions()` — 4-6 example queries from dataset metadata, Redis-cached (1hr TTL), fallback on failure |
+| **Follow-Ups Module** | `generate_follow_up_suggestions()` — LLM-based 2-3 follow-up questions per result, never blocks response |
+| **SSE Streaming** | Real-time event stream: `thinking` → `interpreting` → `executing` → `results` → `suggestions` → `done` |
+| **CORS Middleware** | Configured for frontend origin via `CORS_ORIGINS` setting |
+
+### Database Tables
+
+**`chat_sessions`** — One row per conversation. Columns: `session_id` (UUID PK), `user_identifier`, `name`, `created_at`, `last_active_at`, `is_active`, `message_count`.
+
+**`chat_messages`** — One row per message. Columns: `message_id` (UUID PK), `session_id` (FK), `role`, `content`, `nl_query`, `generated_sql`, `result_metadata` (JSONB), `follow_up_suggestions` (JSONB), `error` (JSONB), `status`, `created_at`. Indexed on `(session_id, created_at)`.
+
+### Chat API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/chat/sessions` | Create a new session |
+| GET | `/api/v1/chat/sessions` | List sessions for user |
+| GET | `/api/v1/chat/sessions/{id}` | Get session details |
+| PATCH | `/api/v1/chat/sessions/{id}` | Rename session |
+| DELETE | `/api/v1/chat/sessions/{id}` | Soft delete session |
+| GET | `/api/v1/chat/sessions/{id}/messages` | Paginated message history |
+| POST | `/api/v1/chat/sessions/{id}/query` | SSE query stream |
+| POST | `/api/v1/chat/sessions/{id}/query/confirm` | Confirm large query |
+| GET | `/api/v1/chat/suggestions` | Load-time suggestions |
+
+All endpoints use `X-User-ID` header for user identification.
+
+### Feature 5 Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `CHAT_SUGGESTIONS_CACHE_TTL_SECONDS` | int | `3600` | Redis TTL for load-time suggestions |
+| `CHAT_SUGGESTIONS_COUNT` | int | `6` | Number of suggestions to generate |
+| `CHAT_MESSAGE_PAGE_SIZE` | int | `50` | Default messages per page |
+| `FOLLOW_UP_LLM_TEMPERATURE` | float | `0.7` | Temperature for follow-up generation |
+| `FOLLOW_UP_LLM_MAX_TOKENS` | int | `150` | Max tokens for follow-up generation |
+| `CORS_ORIGINS` | string | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
+
+### Migration
+
+```bash
+cd backend
+alembic upgrade head   # Runs 004_chat_interface.py
+```
+
+### Feature 5 Tests
+
+```bash
+pytest tests/test_chat_api.py tests/test_suggestions.py -v
+```
+
+- `test_chat_api.py` — 40 tests (session CRUD, SSE streaming, confirmation, error handling)
+- `test_suggestions.py` — 28 tests (load-time suggestions, caching, follow-ups, fallbacks)
+
+---
+
 ## Pipeline Modules
 
 ### Parser (`app/ingestion/parser.py`)
@@ -1124,5 +1193,5 @@ These invariants are enforced across the codebase:
 | Phase 2 | Ocean data database & query infrastructure | ✅ Complete |
 | Phase 3 | Metadata search engine | ✅ Complete |
 | Phase 4 | AI query layer | ✅ Complete |
-| Phase 5 | Chat UI & visualizations | Planned |
+| Phase 5 | Chat interface (backend + frontend) | ✅ Complete |
 | Phase 6 | Public prototype | Planned |

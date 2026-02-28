@@ -15,6 +15,8 @@ Tables:
     8. dataset_versions - Dataset version audit log (Feature 2)
     9. dataset_embeddings - Vector embeddings per dataset (Feature 3)
     10. float_embeddings - Vector embeddings per float (Feature 3)
+    11. chat_sessions - One row per conversation session (Feature 5)
+    12. chat_messages - One row per message in a conversation (Feature 5)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -27,6 +29,7 @@ import uuid
 
 from geoalchemy2 import Geography
 from pgvector.sqlalchemy import Vector
+import sqlalchemy as sa
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -458,3 +461,77 @@ mv_dataset_stats = Table(
     Column("date_range_start", DateTime(timezone=True)),
     Column("date_range_end", DateTime(timezone=True)),
 )
+
+
+# =============================================================================
+# 11. Chat Sessions (Feature 5)
+# =============================================================================
+class ChatSession(Base):
+    """One row per conversation session."""
+    __tablename__ = "chat_sessions"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_identifier: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_active_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa.text("true"), nullable=False
+    )
+    message_count: Mapped[int] = mapped_column(
+        Integer, server_default=sa.text("0"), nullable=False
+    )
+
+    # Relationships
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage",
+        back_populates="session",
+        lazy="dynamic",
+        cascade="all, delete-orphan",
+    )
+
+
+# =============================================================================
+# 12. Chat Messages (Feature 5)
+# =============================================================================
+class ChatMessage(Base):
+    """One row per message in a conversation."""
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_session_created", "session_id", "created_at"),
+    )
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_sessions.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user' or 'assistant'
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    nl_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    generated_sql: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    follow_up_suggestions: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    error: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True
+    )  # pending_confirmation | confirmed | completed | error
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    session: Mapped["ChatSession"] = relationship(
+        "ChatSession", back_populates="messages"
+    )

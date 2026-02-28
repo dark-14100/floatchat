@@ -126,6 +126,16 @@ class Settings(BaseSettings):
     # OPENAI_API_KEY already defined above in LLM section
     
     # =========================================================================
+    # Conversational Chat Interface (Feature 5)
+    # =========================================================================
+    CHAT_SUGGESTIONS_CACHE_TTL_SECONDS: int = 3600  # 1-hour TTL for load-time suggestions cache
+    CHAT_SUGGESTIONS_COUNT: int = 6  # Number of load-time suggestions to generate
+    CHAT_MESSAGE_PAGE_SIZE: int = 50  # Default page size for message history
+    FOLLOW_UP_LLM_TEMPERATURE: float = 0.7  # Slightly creative follow-up suggestions
+    FOLLOW_UP_LLM_MAX_TOKENS: int = 150  # Short follow-up generation
+    CORS_ORIGINS: str = "http://localhost:3000"  # Comma-separated allowed origins
+    
+    # =========================================================================
     # Application
     # =========================================================================
     DEBUG: bool = False
