@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "dev": "npm --prefix \"floatchai ai/floatchat/frontend\" run dev",
+    "build": "npm --prefix \"floatchai ai/floatchat/frontend\" run build",
+    "test": "npm --prefix \"floatchai ai/floatchat/frontend\" run test"
+  },
+  "devDependencies": {}
+}

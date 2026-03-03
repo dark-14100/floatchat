@@ -49,6 +49,7 @@ export default function ChatSessionPage() {
   const setPendingInterpretation = useChatStore(
     (s) => s.setPendingInterpretation,
   );
+  const setResultRows = useChatStore((s) => s.setResultRows);
   const isLoading = useChatStore((s) => s.isLoading);
   const streamState = useChatStore((s) => s.streamState);
   const pendingInterpretation = useChatStore((s) => s.pendingInterpretation);
@@ -141,6 +142,7 @@ export default function ChatSessionPage() {
             created_at: new Date().toISOString(),
           };
           appendMessage(sessionId, assistantMsg);
+          setResultRows(assistantMsg.message_id, results.rows);
           setStreamState("done");
           break;
         }
@@ -206,6 +208,7 @@ export default function ChatSessionPage() {
       sessionId,
       appendMessage,
       updateLastMessage,
+      setResultRows,
       setStreamState,
       setPendingInterpretation,
     ],

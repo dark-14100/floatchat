@@ -14,12 +14,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import {
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
   Trash2,
   MessagesSquare,
+  BarChart2,
   X,
 } from "lucide-react";
 
@@ -48,6 +50,7 @@ import {
   deleteSession,
 } from "@/lib/api";
 import type { ChatSession } from "@/types/chat";
+import ThemeToggle from "@/components/layout/ThemeToggle";
 
 // ── Relative time helper ───────────────────────────────────────────────────
 
@@ -204,7 +207,7 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
       <aside
         className={`
           fixed inset-y-0 left-0 z-40 flex w-[280px] flex-col
-          border-r border-border bg-card
+          border-r border-border bg-bg-subtle
           transition-transform duration-200 ease-in-out
           md:relative md:translate-x-0
           ${isOpen ? "translate-x-0" : "-translate-x-full"}
@@ -213,8 +216,8 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
         {/* Header */}
         <div className="flex h-14 items-center justify-between border-b border-border px-4">
           <div className="flex items-center gap-2">
-            <MessagesSquare className="h-5 w-5 text-primary" />
-            <span className="text-lg font-semibold text-foreground">
+            <MessagesSquare className="h-5 w-5 text-ocean-primary" />
+            <span className="font-display text-xl font-bold text-ocean-deep dark:text-moon-silver">
               FloatChat
             </span>
           </div>
@@ -231,8 +234,7 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
         <div className="p-3">
           <Button
             onClick={handleNewConversation}
-            className="w-full justify-start gap-2"
-            variant="outline"
+            className="w-full justify-start gap-2 bg-ocean-primary text-text-inverse hover:bg-ocean-light"
           >
             <MessageSquarePlus className="h-4 w-4" />
             New Conversation
@@ -321,6 +323,20 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
             )}
           </div>
         </ScrollArea>
+
+        <div className="border-t border-border px-3 py-3">
+          <div className="flex items-center justify-between">
+            <Link
+              href="/dashboard"
+              onClick={onClose}
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            >
+              <BarChart2 className="h-4 w-4" />
+              <span>Dashboard</span>
+            </Link>
+            <ThemeToggle />
+          </div>
+        </div>
       </aside>
 
       {/* Rename dialog */}

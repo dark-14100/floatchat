@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 import SessionSidebar from "@/components/layout/SessionSidebar";
+import BackgroundIllustration from "@/components/layout/BackgroundIllustration";
 
 interface LayoutShellProps {
   children: React.ReactNode;
@@ -33,29 +34,34 @@ export function LayoutShell({ children }: LayoutShellProps) {
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
-      {/* Sidebar */}
-      <SessionSidebar isOpen={sidebarOpen} onClose={closeSidebar} />
+    <>
+      {/* Background illustration — outside flex so fixed isn't clipped */}
+      <BackgroundIllustration />
 
-      {/* Main panel */}
-      <div className="relative flex flex-1 flex-col overflow-hidden">
-        {/* Mobile hamburger header */}
-        <div className="flex h-14 items-center border-b border-border px-4 md:hidden">
-          <button
-            onClick={openSidebar}
-            className="rounded p-1 text-muted-foreground hover:text-foreground"
-            aria-label="Open sidebar"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-          <span className="ml-3 text-sm font-semibold text-foreground">
-            FloatChat
-          </span>
+      <div className="flex h-screen w-screen overflow-hidden bg-bg-base text-foreground">
+        {/* Sidebar */}
+        <SessionSidebar isOpen={sidebarOpen} onClose={closeSidebar} />
+
+        {/* Main panel */}
+        <div className="relative z-[1] flex flex-1 flex-col overflow-hidden">
+          {/* Mobile hamburger header */}
+          <div className="flex h-14 items-center border-b border-border px-4 md:hidden">
+            <button
+              onClick={openSidebar}
+              className="rounded p-1 text-muted-foreground hover:text-foreground"
+              aria-label="Open sidebar"
+            >
+              <Menu className="h-6 w-6" />
+            </button>
+            <span className="ml-3 text-sm font-semibold text-foreground">
+              FloatChat
+            </span>
+          </div>
+
+          {/* Page content */}
+          <main className="flex-1 overflow-hidden">{children}</main>
         </div>
-
-        {/* Page content */}
-        <main className="flex-1 overflow-hidden">{children}</main>
       </div>
-    </div>
+    </>
   );
 }

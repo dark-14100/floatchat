@@ -15,17 +15,24 @@
  */
 
 import React, { useState } from "react";
+import dynamic from "next/dynamic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeSanitize from "rehype-sanitize";
 import { User, Bot, ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useChatStore } from "@/store/chatStore";
 
 import type { ChatMessage as ChatMessageType, StreamState } from "@/types/chat";
 import ResultTable from "./ResultTable";
 import SuggestedFollowUps from "./SuggestedFollowUps";
 import LoadingMessage from "./LoadingMessage";
+
+const VisualizationPanel = dynamic(
+  () => import("../visualization/VisualizationPanel"),
+  { ssr: false },
+);
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -35,10 +42,6 @@ interface ChatMessageProps {
   streamState?: StreamState;
   /** Pending interpretation text during SSE stream */
   pendingInterpretation?: string | null;
-  /** Chart component slot (Feature 6) */
-  chartComponent?: React.ReactNode;
-  /** Map component slot (Feature 7) */
-  mapComponent?: React.ReactNode;
   /** Callback when a follow-up suggestion is selected */
   onFollowUpSelect?: (query: string) => void;
   /** Callback when "Run this query" is clicked for confirmation */
@@ -82,8 +85,6 @@ export default function ChatMessage({
   message,
   streamState,
   pendingInterpretation,
-  chartComponent,
-  mapComponent,
   onFollowUpSelect,
   onConfirm,
   onCancelConfirm,
@@ -191,8 +192,6 @@ export default function ChatMessage({
   // ── Assistant: success state ───────────────
   return <SuccessMessage
     message={message}
-    chartComponent={chartComponent}
-    mapComponent={mapComponent}
     onFollowUpSelect={onFollowUpSelect}
   />;
 }
@@ -201,19 +200,18 @@ export default function ChatMessage({
 
 function SuccessMessage({
   message,
-  chartComponent,
-  mapComponent,
   onFollowUpSelect,
 }: {
   message: ChatMessageType;
-  chartComponent?: React.ReactNode;
-  mapComponent?: React.ReactNode;
   onFollowUpSelect?: (query: string) => void;
 }) {
   const hasResults =
     message.result_metadata && message.result_metadata.row_count > 0;
   const emptyResults =
     message.result_metadata && message.result_metadata.row_count === 0;
+  const rows = useChatStore((s) => s.resultRows[message.message_id] ?? []);
+  const hasVisualizationData =
+    !!message.result_metadata && rows.length > 0;
 
   return (
     <div className="flex w-full justify-start">
@@ -242,17 +240,19 @@ function SuccessMessage({
           {hasResults && message.result_metadata && (
             <ResultTable
               columns={message.result_metadata.columns}
-              rows={[]} // Rows are populated when results arrive via SSE; stored messages have metadata only
+              rows={rows}
               rowCount={message.result_metadata.row_count}
               truncated={message.result_metadata.truncated}
             />
           )}
 
-          {/* Chart slot (Feature 6) */}
-          {chartComponent}
-
-          {/* Map slot (Feature 7) */}
-          {mapComponent}
+          {hasVisualizationData && message.result_metadata && (
+            <VisualizationPanel
+              columns={message.result_metadata.columns}
+              rows={rows}
+              messageId={message.message_id}
+            />
+          )}
 
           {/* Metadata line */}
           {message.result_metadata && message.result_metadata.row_count > 0 && (

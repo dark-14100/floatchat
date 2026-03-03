@@ -13,6 +13,8 @@ import type {
   Suggestion,
   StreamState,
 } from "@/types/chat";
+import type { ChartRow } from "@/types/visualization";
+import type { DashboardWidget } from "@/types/visualization";
 
 // ── Store interface ────────────────────────────────────────────────────────
 
@@ -21,6 +23,8 @@ interface ChatStore {
   sessions: ChatSession[];
   activeSessionId: string | null;
   messages: Record<string, ChatMessage[]>;
+  resultRows: Record<string, ChartRow[]>;
+  pinnedWidgets: DashboardWidget[];
   isLoading: boolean;
   streamState: StreamState;
   pendingInterpretation: string | null;
@@ -33,6 +37,10 @@ interface ChatStore {
   setActiveSession: (sessionId: string | null) => void;
   setMessages: (sessionId: string, messages: ChatMessage[]) => void;
   appendMessage: (sessionId: string, message: ChatMessage) => void;
+  setResultRows: (messageId: string, rows: ChartRow[]) => void;
+  addWidget: (widget: Omit<DashboardWidget, "layout">) => void;
+  removeWidget: (widgetId: string) => void;
+  updateWidgetLayout: (widgetId: string, layout: DashboardWidget["layout"]) => void;
   updateLastMessage: (
     sessionId: string,
     updates: Partial<ChatMessage>,
@@ -50,6 +58,8 @@ export const useChatStore = create<ChatStore>((set) => ({
   sessions: [],
   activeSessionId: null,
   messages: {},
+  resultRows: {},
+  pinnedWidgets: [],
   isLoading: false,
   streamState: null,
   pendingInterpretation: null,
@@ -81,6 +91,47 @@ export const useChatStore = create<ChatStore>((set) => ({
         ...state.messages,
         [sessionId]: [...(state.messages[sessionId] ?? []), message],
       },
+    })),
+
+  setResultRows: (messageId, rows) =>
+    set((state) => ({
+      resultRows: { ...state.resultRows, [messageId]: rows },
+    })),
+
+  addWidget: (widget) =>
+    set((state) => {
+      if (state.pinnedWidgets.length >= 10) {
+        return state;
+      }
+      if (state.pinnedWidgets.some((w) => w.id === widget.id)) {
+        return state;
+      }
+      return {
+        pinnedWidgets: [
+          ...state.pinnedWidgets,
+          {
+            ...widget,
+            layout: {
+              x: 0,
+              y: Infinity,
+              w: 4,
+              h: 6,
+            },
+          },
+        ],
+      };
+    }),
+
+  removeWidget: (widgetId) =>
+    set((state) => ({
+      pinnedWidgets: state.pinnedWidgets.filter((widget) => widget.id !== widgetId),
+    })),
+
+  updateWidgetLayout: (widgetId, layout) =>
+    set((state) => ({
+      pinnedWidgets: state.pinnedWidgets.map((widget) =>
+        widget.id === widgetId ? { ...widget, layout } : widget,
+      ),
     })),
 
   updateLastMessage: (sessionId, updates) =>
