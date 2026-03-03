@@ -22,6 +22,7 @@ import {
   Trash2,
   MessagesSquare,
   BarChart2,
+  Map,
   X,
 } from "lucide-react";
 
@@ -326,14 +327,24 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
 
         <div className="border-t border-border px-3 py-3">
           <div className="flex items-center justify-between">
-            <Link
-              href="/dashboard"
-              onClick={onClose}
-              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-            >
-              <BarChart2 className="h-4 w-4" />
-              <span>Dashboard</span>
-            </Link>
+            <div className="flex items-center gap-1">
+              <Link
+                href="/map"
+                onClick={onClose}
+                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                <Map className="h-4 w-4" />
+                <span>Map</span>
+              </Link>
+              <Link
+                href="/dashboard"
+                onClick={onClose}
+                className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                <BarChart2 className="h-4 w-4" />
+                <span>Dashboard</span>
+              </Link>
+            </div>
             <ThemeToggle />
           </div>
         </div>

@@ -103,7 +103,7 @@ export default function BackgroundIllustration() {
           <div
             className="absolute inset-0"
             style={{
-              bottom: "45%",
+              bottom: "60%",
               opacity: 0.35,
               backgroundImage: `
                 radial-gradient(circle 1px at 8px 6px, #B8A080 1px, transparent 1px),
@@ -158,8 +158,8 @@ export default function BackgroundIllustration() {
           <div
             className="absolute left-0 w-full"
             style={{
-              bottom: "43%",
-              height: "100px",
+              bottom: "90%",
+              height: "0px",
               background:
                 "linear-gradient(to bottom, transparent 0%, rgba(168,216,232,0.10) 40%, rgba(135,206,235,0.15) 100%)",
             }}

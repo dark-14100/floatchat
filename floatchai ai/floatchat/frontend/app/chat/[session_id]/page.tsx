@@ -12,7 +12,7 @@
  * - Cleanup on unmount (abort stream)
  */
 
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { useChatStore } from "@/store/chatStore";
 import { createQueryStream, createConfirmStream } from "@/lib/sse";
@@ -38,6 +38,7 @@ function uuid(): string {
 
 export default function ChatSessionPage() {
   const params = useParams<{ session_id: string }>();
+  const searchParams = useSearchParams();
   const sessionId = params.session_id;
 
   // Store selectors
@@ -57,6 +58,7 @@ export default function ChatSessionPage() {
   // Refs
   const abortRef = useRef<AbortController | null>(null);
   const inputRef = useRef<ChatInputHandle>(null);
+  const processedPrefillRef = useRef<string | null>(null);
 
   // Track the current streaming result data so we can build the final message
   const streamDataRef = useRef<{
@@ -301,6 +303,23 @@ export default function ChatSessionPage() {
       handleSSEEvent,
     ],
   );
+
+  // ── URL prefill auto-submit (one-time per session/value) ─────────────
+
+  useEffect(() => {
+    const prefill = searchParams.get("prefill")?.trim();
+    if (!prefill) {
+      return;
+    }
+
+    const prefillKey = `${sessionId}:${prefill}`;
+    if (processedPrefillRef.current === prefillKey) {
+      return;
+    }
+
+    processedPrefillRef.current = prefillKey;
+    submitQuery(prefill);
+  }, [sessionId, searchParams, submitQuery]);
 
   // ── Confirm query ──────────────────────────────────────────────────────
 

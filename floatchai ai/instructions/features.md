@@ -829,7 +829,7 @@ Operational reliability infrastructure to ensure FloatChat is healthy, performan
 └─────────────────────────────────────────────────────────┘
 ```
 
----
+---  
 
 ## Tech Stack Summary
 

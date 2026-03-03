@@ -1,4 +1,4 @@
-# FloatChat Backend
+# FloatChat
 
 ## What is FloatChat?
 
@@ -564,7 +564,7 @@ If validation fails, the error is injected back into the prompt and the LLM retr
 > _"Feature 5 wraps Feature 4's power in a conversational interface that feels familiar, approachable, and intelligent."_
 > — Feature 5 PRD §1.2
 
-Feature 5 adds a chat backend with session management, SSE streaming, message persistence, and suggestion generation. The frontend is a separate Next.js 14 application (see `../frontend/README.md`).
+Feature 5 adds a chat backend with session management, SSE streaming, message persistence, and suggestion generation, with a Next.js 14 frontend application in the same repository.
 
 ### What Was Built (Backend)
 
@@ -1194,4 +1194,120 @@ These invariants are enforced across the codebase:
 | Phase 3 | Metadata search engine | ✅ Complete |
 | Phase 4 | AI query layer | ✅ Complete |
 | Phase 5 | Chat interface (backend + frontend) | ✅ Complete |
-| Phase 6 | Public prototype | Planned |
+| Phase 6 | Public prototype + chart experience | ✅ Complete |
+| Phase 7 | Geospatial map exploration | ✅ Complete |
+
+---
+
+## Feature 7: Geospatial Map Exploration
+
+Feature 7 adds an interactive map workflow so users can discover floats spatially, inspect float details, and deep-link directly into chat queries.
+
+### Backend API (`/api/v1/map`)
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /active-floats` | Latest location for all active floats (Redis cached) |
+| `GET /nearest-floats` | N nearest floats to a lat/lon point |
+| `POST /radius-query` | Profile metadata inside a user-selected radius |
+| `GET /floats/{platform_number}` | Float metadata + recent profile pressure/temperature |
+| `GET /basin-floats` | Latest floats within a resolved basin polygon |
+| `GET /basin-polygons` | Basin polygons as GeoJSON FeatureCollection (Redis cached) |
+
+### Frontend Experience (`/map`)
+
+- Clustered active-float markers with float-type filtering.
+- Circle drawing for nearest/radius queries.
+- Basin filtering with all 15 configured basin/sub-region names.
+- Search resolution order: decimal coords → DMS → basin name → geography lookup.
+- Float detail panel with mini profile chart and chat deep-link actions.
+- Map route hides session sidebar/header for full-screen exploration.
+
+### Deep-Link to Chat
+
+`/chat/[session_id]?prefill=...` now auto-submits exactly once per session/value pair, enabling one-click map-to-chat workflows.
+
+### Feature 7 Validation
+
+- Backend map endpoint tests: `tests/test_map_api.py`.
+- Frontend tests added for map search parsing, basin rendering, and prefill auto-submit behavior.
+- Frontend build + type checks pass.
+
+---
+
+## Current Status (March 3, 2026)
+
+- Features 1 through 7 are implemented.
+- Map API, map route, chat deep-link integration, and test coverage for new behavior are in place.
+
+---
+
+## Frontend Application
+
+The frontend is a Next.js 14 app located in `frontend/` and serves as the main user interface for chat, dashboard visualizations, and geospatial exploration.
+
+### Frontend Tech Stack
+
+| Package | Purpose |
+|---|---|
+| Next.js 14 + React 18 | App Router UI framework |
+| TypeScript 5 | Static typing |
+| Tailwind CSS | Styling and design tokens |
+| Zustand | Client-side state management |
+| react-markdown + remark-gfm | Markdown rendering |
+| Vitest + RTL | Component/unit testing |
+| Leaflet ecosystem | Map rendering for Feature 7 |
+
+### Frontend Quick Start
+
+```bash
+cd frontend
+npm install
+cp .env.local.example .env.local
+npm run dev
+```
+
+Default frontend URL: `http://localhost:3000`  
+Expected backend URL: `http://localhost:8000`
+
+### Frontend Environment Variable
+
+| Variable | Default | Description |
+|---|---|---|
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API base URL |
+
+### Frontend Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Start development server |
+| `npm run build` | Production build |
+| `npm run start` | Run production server |
+| `npm run lint` | Next.js lint |
+| `npm test` | Run Vitest suite |
+
+### Frontend Architecture
+
+```
+frontend/
+├── app/                  # Next.js routes (/chat, /dashboard, /map)
+├── components/           # UI components (chat, layout, map, visualization)
+├── lib/                  # Typed API clients, SSE helpers, map queries
+├── store/                # Zustand stores
+├── types/                # Shared TS interfaces and declaration shims
+└── tests/                # Vitest test suites
+```
+
+### Frontend Interaction Flows
+
+- Chat flow uses SSE events: `thinking` → `interpreting` → `executing` → `results` → `suggestions` → `done`.
+- Feature 7 map flow supports nearest-float lookup, radius queries, basin filtering, and deep-links into chat via `prefill`.
+- Chat deep-links auto-submit once per session/value pair for map-to-chat workflows.
+
+### Frontend Tests (Current)
+
+- Existing chat/component tests remain active under `frontend/tests/`.
+- Feature 7 additions include:
+  - `SearchBar.test.tsx`
+  - `BasinFilterPanel.test.tsx`
+  - `ChatSessionPrefill.test.tsx`

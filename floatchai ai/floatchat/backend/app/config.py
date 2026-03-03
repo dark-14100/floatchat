@@ -134,6 +134,16 @@ class Settings(BaseSettings):
     FOLLOW_UP_LLM_TEMPERATURE: float = 0.7  # Slightly creative follow-up suggestions
     FOLLOW_UP_LLM_MAX_TOKENS: int = 150  # Short follow-up generation
     CORS_ORIGINS: str = "http://localhost:3000"  # Comma-separated allowed origins
+
+    # =========================================================================
+    # Geospatial Map (Feature 7)
+    # =========================================================================
+    MAP_ACTIVE_FLOATS_CACHE_TTL: int = 300
+    MAP_NEAREST_FLOATS_DEFAULT_N: int = 10
+    MAP_NEAREST_FLOATS_MAX_N: int = 50
+    MAP_NEAREST_FLOATS_DEFAULT_RADIUS_KM: float = 500
+    MAP_RADIUS_QUERY_MAX_KM: float = 2000
+    MAP_FLOAT_DETAIL_LAST_PROFILES: int = 5
     
     # =========================================================================
     # Application
