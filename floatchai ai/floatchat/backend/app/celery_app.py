@@ -21,7 +21,11 @@ celery = Celery(
     "floatchat",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.ingestion.tasks", "app.search.tasks"],  # Auto-discover tasks modules
+    include=[
+        "app.ingestion.tasks",
+        "app.search.tasks",
+        "app.export.tasks",
+    ],  # Auto-discover tasks modules
 )
 
 # Celery configuration
@@ -54,6 +58,7 @@ celery.conf.update(
         "app.ingestion.tasks.ingest_zip_task": {"queue": "ingestion"},
         "app.ingestion.tasks.retry_stale_jobs": {"queue": "default"},
         "app.search.tasks.index_dataset_task": {"queue": "default"},
+        "app.export.tasks.generate_export_task": {"queue": "default"},
     },
     
     # Task default queue

@@ -150,6 +150,16 @@ class Settings(BaseSettings):
     MAP_NEAREST_FLOATS_DEFAULT_RADIUS_KM: float = 500
     MAP_RADIUS_QUERY_MAX_KM: float = 2000
     MAP_FLOAT_DETAIL_LAST_PROFILES: int = 5
+
+    # =========================================================================
+    # Data Export System (Feature 8)
+    # =========================================================================
+    EXPORT_SYNC_SIZE_LIMIT_MB: int = 50
+    EXPORT_PRESIGNED_URL_EXPIRY_SECONDS: int = 3600
+    EXPORT_TASK_STATUS_TTL_SECONDS: int = 7200
+    EXPORT_BUCKET_NAME: str = "floatchat-exports"
+    EXPORT_MAX_POLL_SECONDS: int = 120
+    EXPORT_MAX_SIZE_MB: int = 500
     
     # =========================================================================
     # Application

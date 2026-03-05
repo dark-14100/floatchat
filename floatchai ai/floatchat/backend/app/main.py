@@ -5,11 +5,14 @@ FastAPI application entry point for the Data Ingestion Pipeline.
 """
 
 import logging
+import socket
 import sys
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
+from botocore.exceptions import ClientError
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -19,6 +22,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
 from app.rate_limiter import limiter
+from app.storage.s3 import get_s3_client
 
 
 # =============================================================================
@@ -105,6 +109,93 @@ def configure_sentry() -> None:
             logger.warning("sentry_init_failed", error=str(e))
 
 
+def ensure_export_bucket(logger: structlog.stdlib.BoundLogger) -> None:
+    """Ensure export bucket exists and has a 24-hour lifecycle policy."""
+    endpoint = settings.S3_ENDPOINT_URL
+    if endpoint:
+        parsed = urlparse(endpoint)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+        if host:
+            try:
+                with socket.create_connection((host, port), timeout=0.5):
+                    pass
+            except OSError:
+                logger.warning(
+                    "export_bucket_endpoint_unreachable",
+                    endpoint=endpoint,
+                )
+                return
+
+    try:
+        client = get_s3_client()
+    except Exception as exc:
+        logger.warning("export_bucket_client_init_failed", error=str(exc))
+        return
+
+    create_kwargs: dict[str, Any] = {"Bucket": settings.EXPORT_BUCKET_NAME}
+    if settings.S3_REGION and settings.S3_REGION != "us-east-1":
+        create_kwargs["CreateBucketConfiguration"] = {
+            "LocationConstraint": settings.S3_REGION,
+        }
+
+    try:
+        client.create_bucket(**create_kwargs)
+        logger.info("export_bucket_created", bucket=settings.EXPORT_BUCKET_NAME)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code not in {"BucketAlreadyOwnedByYou", "BucketAlreadyExists"}:
+            logger.warning(
+                "export_bucket_create_failed",
+                bucket=settings.EXPORT_BUCKET_NAME,
+                error_code=code,
+                error=str(exc),
+            )
+            return
+    except Exception as exc:
+        logger.warning(
+            "export_bucket_create_unavailable",
+            bucket=settings.EXPORT_BUCKET_NAME,
+            error=str(exc),
+        )
+        return
+
+    lifecycle_config = {
+        "Rules": [
+            {
+                "ID": "expire-exports-1d",
+                "Status": "Enabled",
+                "Filter": {"Prefix": ""},
+                "Expiration": {"Days": 1},
+            }
+        ]
+    }
+
+    try:
+        client.put_bucket_lifecycle_configuration(
+            Bucket=settings.EXPORT_BUCKET_NAME,
+            LifecycleConfiguration=lifecycle_config,
+        )
+        logger.info(
+            "export_bucket_lifecycle_applied",
+            bucket=settings.EXPORT_BUCKET_NAME,
+            expiration_days=1,
+        )
+    except ClientError as exc:
+        logger.warning(
+            "export_bucket_lifecycle_failed",
+            bucket=settings.EXPORT_BUCKET_NAME,
+            error=str(exc),
+        )
+    except Exception as exc:
+        logger.warning(
+            "export_bucket_lifecycle_unavailable",
+            bucket=settings.EXPORT_BUCKET_NAME,
+            error=str(exc),
+        )
+
+
 # =============================================================================
 # Application Lifespan
 # =============================================================================
@@ -123,6 +214,7 @@ async def lifespan(app: FastAPI):
         app_name="FloatChat Ingestion API",
         debug=settings.DEBUG,
     )
+    ensure_export_bucket(logger)
     
     yield
     
@@ -190,6 +282,7 @@ from app.api.v1.query import router as query_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.map import router as map_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.export import router as export_router
 
 app.include_router(ingestion_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1/search")
@@ -197,3 +290,4 @@ app.include_router(query_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(map_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(export_router, prefix="/api/v1")

@@ -1,235 +1,36 @@
 # FloatChat
 
-## What is FloatChat?
+**AI-powered natural language interface for ARGO oceanographic float data.**
 
-FloatChat is an AI-powered conversational interface that enables users to explore ARGO oceanographic datasets using natural language. The system converts complex NetCDF datasets into structured, queryable data and provides search, analytics, and visualization through a chat interface.
+FloatChat lets researchers, climate analysts, and students explore ARGO ocean datasets by asking questions in plain English. Type a question — get results, charts, and maps in seconds — no SQL, no scripts, no domain expertise required.
 
-**Target users:** Ocean researchers needing fast analysis and data export, climate analysts needing insights without coding, and students needing intuitive learning tools.
-
-**Scale:** 4,000+ active ARGO floats, millions of ocean profiles, global ocean coverage.
+> 4,000+ active floats · Millions of ocean profiles · Global ocean coverage
 
 ---
 
-## Feature 1: Data Ingestion Pipeline
+## Table of Contents
 
-> _"The Data Ingestion Pipeline is the foundational prerequisite for every other FloatChat feature. Without it, there is no data to query."_
-> — Feature 1 PRD §1.1
+- [What It Does](#what-it-does)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Features](#features)
+- [API Reference](#api-reference)
+- [Database Schema](#database-schema)
+- [Environment Variables](#environment-variables)
+- [Running Tests](#running-tests)
+- [Project Structure](#project-structure)
+- [Tech Stack](#tech-stack)
 
-The ingestion pipeline accepts ARGO NetCDF files (`.nc`, `.nc4`) or ZIP archives via a REST API, validates them, stages to object storage, parses all oceanographic variables, cleans/normalizes the data, writes to PostgreSQL + PostGIS using idempotent upserts, and generates dataset metadata with an optional LLM summary — all asynchronously via Celery.
+---
 
-### High-Level Architecture
+## What It Does
 
-```
-    ARGO NetCDF files
-          │
-          ▼
-    REST API (FastAPI)  ──→  returns job_id within 2s
-          │
-          ▼
-    Celery Worker (Redis broker)
-          │
-          ├─ 1. Stage raw file to S3/MinIO
-          ├─ 2. Validate NetCDF structure
-          ├─ 3. Parse profiles & measurements
-          ├─ 4. Clean & flag outliers
-          ├─ 5. Upsert to PostgreSQL + PostGIS
-          ├─ 6. Compute dataset metadata
-          ├─ 7. Generate LLM summary (GPT-4o)
-          └─ 8. Mark job succeeded
-          │
-          ▼
-    PostgreSQL + PostGIS (queryable data)
-```
-
-### Success Criteria
-
-From the PRD:
-
-| Criterion | Target |
+| User types | FloatChat does |
 |---|---|
-| Parse success rate on valid ARGO files | ≥ 99.5% |
-| Ingestion throughput | ≥ 500 profiles/minute per worker |
-| Duplicate profile handling | Zero duplicate `(platform_number, cycle_number)` pairs |
-| QC flag accuracy | 100% match against ARGO QC standards |
-| Julian date conversion accuracy | ±0 seconds tolerance |
-| Failed file detection | 100% of malformed files flagged and logged |
-| End-to-end latency (upload → queryable) | < 5 minutes for a 100 MB file |
-
----
-
-## Feature 2: Ocean Data Database
-
-> _"Feature 2 transforms the raw ingested data into a high-performance, spatially-indexed ocean database optimised for the AI query layer."_
-> — Feature 2 PRD §1.1
-
-Building on the ingestion pipeline, Feature 2 adds **connection pooling**, **spatial indexing**, **materialized views**, a **Redis query-result cache**, and a **Data Access Layer (DAL)** that downstream features use exclusively to read data.
-
-### What Was Built
-
-| Component | Description |
-|-----------|-------------|
-| **PgBouncer** | Connection pooler in front of PostgreSQL (port 5433). All application queries route through PgBouncer; only Alembic migrations connect directly to port 5432. |
-| **Migration 002** | ALTERs `profile_id` and `measurement_id` columns to `BIGINT`; creates `ocean_regions` and `dataset_versions` tables; adds GiST, BRIN, B-tree, and partial indexes; creates two materialized views; provisions a `floatchat_readonly` database user. |
-| **Ocean Regions** | `ocean_regions` table with `GEOGRAPHY(MULTIPOLYGON, 4326)` geometries for basin-level spatial queries (Atlantic, Pacific, Indian, etc.). Seeded from Natural Earth 1:10m polygons. |
-| **Dataset Versions** | `dataset_versions` table for tracking version history of ingested datasets. |
-| **Materialized Views** | `mv_float_latest_position` (latest position per float) and `mv_dataset_stats` (per-dataset aggregates). Refreshed after each ingestion run. |
-| **Redis Cache** | Query-result caching with configurable TTL (default 5 min) and max-rows guard. Cache keys are MD5 hashes of SQL + params. |
-| **Data Access Layer** | 10 query functions + 1 MV refresh function in `app/db/dal.py`. All return plain dicts. No other module writes raw SQL. |
-| **Readonly Engine** | Separate SQLAlchemy engine connecting as `floatchat_readonly` via PgBouncer for read-only query workloads. |
-
-### Architecture
-
-```
-    Application
-        │
-        ▼
-    PgBouncer (port 5433)  ──→  PostgreSQL 15 + PostGIS (port 5432)
-        │                              │
-        │                         ocean_regions
-        │                         dataset_versions
-        │                         mv_float_latest_position
-        │                         mv_dataset_stats
-        │                         GiST / BRIN / B-tree indexes
-        ▼
-    Redis Cache ← DAL functions ← query results (plain dicts)
-```
-
-### DAL Function Reference
-
-All functions live in `app/db/dal.py`. Each accepts a SQLAlchemy `Session` as `db` and returns plain Python dicts.
-
-| Function | Description |
-|----------|-------------|
-| `get_profiles_by_radius(lat, lon, radius_m, *, db, start_date?, end_date?)` | Profiles within a radius (metres) of a point, optional date filter |
-| `get_profiles_by_basin(basin_name, *, db)` | Profiles inside a named ocean region polygon |
-| `get_measurements_by_profile(profile_id, *, db, min_pressure?, max_pressure?)` | Measurements for a profile, optional pressure range filter |
-| `get_float_latest_positions(*, db)` | Latest position per float from the materialized view |
-| `get_active_datasets(*, db)` | All datasets where `is_active = True` |
-| `get_dataset_by_id(dataset_id, *, db)` | Single dataset by ID (raises `ValueError` if not found) |
-| `search_floats_by_type(float_type, *, db)` | Floats filtered by type (`core`, `BGC`, `deep`) |
-| `get_profiles_with_variable(variable_name, *, db, limit?)` | Profiles that have non-NULL values for a given BGC variable |
-| `invalidate_query_cache(redis_client)` | Deletes all `query_cache:*` keys from Redis |
-| `refresh_materialized_views(*, db)` | Refreshes both materialized views (called after ingestion) |
-
----
-
-## Feature 3: Metadata Search Engine
-
-> _"The Metadata Search Engine enables semantic similarity search over datasets and floats, fuzzy region discovery, and dataset summaries — all without requiring SQL."_
-> — Feature 3 PRD §1.1
-
-Building on the ingestion pipeline and ocean database, Feature 3 adds **vector embeddings** (OpenAI `text-embedding-3-small`), **pgvector HNSW indexes**, **semantic search** with hybrid scoring, **fuzzy region matching** via `pg_trgm`, and **float discovery** functions — exposed through 6 REST API endpoints.
-
-### What Was Built
-
-| Component | Description |
-|-----------|-------------|
-| **pgvector Extension** | Custom `Dockerfile.postgres` extending `postgis/postgis:15-3.4` with pgvector. HNSW indexes (m=16, ef_construction=64) on both embedding tables. |
-| **Migration 003** | Creates `dataset_embeddings` and `float_embeddings` tables with `vector(1536)` columns, HNSW indexes using `vector_cosine_ops`. |
-| **Embeddings Module** | Centralized OpenAI API caller with batch support (`EMBEDDING_BATCH_SIZE=100`). Text builders for datasets and floats. The ONLY module that calls the embedding API (Hard Rule #18). |
-| **Indexer Module** | Builds embedding texts from DB records, pre-resolves region names via spatial queries, persists embeddings with `INSERT ... ON CONFLICT DO UPDATE`. Handles failures by setting `status='embedding_failed'`. |
-| **Search Module** | Semantic similarity search using pgvector `<=>` cosine distance. Hybrid scoring with recency boost (+0.05) and region match boost (+0.10). 3× candidate retrieval with threshold filtering. |
-| **Discovery Module** | Fuzzy region name resolution via `pg_trgm` `similarity()`. Float discovery by region (spatial) and by variable. Rich dataset summaries and lightweight summary cards. |
-| **Celery Task** | `index_dataset_task` with auto-retry for transient OpenAI errors. Refreshes both materialized views after indexing. Fire-and-forget trigger from ingestion pipeline. |
-| **API Router** | 6 endpoints at `/api/v1/search/` — semantic search, float discovery, dataset summaries, and admin reindex. |
-
-### Architecture
-
-```
-    Ingestion Pipeline (Feature 1)
-          │
-          │  ── job succeeded ──▶  index_dataset_task.delay()
-          │                              │
-          ▼                              ▼
-    PostgreSQL + PostGIS          Celery Worker (search queue)
-          │                              │
-          │                         ┌────┴────┐
-          │                         │ Indexer  │── build texts ──▶ Embeddings Module
-          │                         │         │                        │
-          │                         │         │◀── vectors ────── OpenAI API
-          │                         │         │                   (text-embedding-3-small)
-          │                         └────┬────┘
-          │                              │
-          │                    dataset_embeddings
-          │                    float_embeddings
-          │                    (pgvector HNSW indexes)
-          │                              │
-          ▼                              ▼
-    Search API ◀─── cosine distance (<=>)  ──── query embedding
-       │
-       ├─  GET /datasets          (semantic search)
-       ├─  GET /floats            (semantic search)
-       ├─  GET /floats/by-region  (spatial discovery)
-       ├─  GET /datasets/{id}/summary
-       ├─  GET /datasets/summaries
-       └─  POST /reindex/{id}     (admin only)
-```
-
-### Search API Endpoints
-
-All search endpoints are mounted at `/api/v1/search/`. GET endpoints are public; POST endpoints require admin JWT.
-
-#### `GET /api/v1/search/datasets`
-
-Semantic search over dataset embeddings.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `q` | string | required | Natural language search query |
-| `limit` | int | 10 | Max results (capped at 50) |
-| `variable` | string | — | Filter by variable name |
-| `float_type` | string | — | Filter by float type |
-| `date_from` | ISO date | — | Filter datasets overlapping this date |
-| `date_to` | ISO date | — | Filter datasets overlapping this date |
-| `region_name` | string | — | Boost results matching this region |
-
-**Response 200:**
-```json
-[
-  {
-    "dataset_id": 1,
-    "name": "Argo Indian Ocean 2025",
-    "summary_text": "Temperature and salinity profiles...",
-    "score": 0.8723,
-    "date_range_start": "2025-01-01T00:00:00",
-    "date_range_end": "2025-06-30T00:00:00",
-    "float_count": 42,
-    "variable_list": {"temperature": true, "salinity": true}
-  }
-]
-```
-
-#### `GET /api/v1/search/floats`
-
-Semantic search over float embeddings.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `q` | string | required | Natural language search query |
-| `limit` | int | 10 | Max results (capped at 50) |
-| `float_type` | string | — | Filter by float type |
-| `region_name` | string | — | Filter by deployment region |
-
-#### `GET /api/v1/search/floats/by-region`
-
-Discover floats whose latest position is within a named ocean region.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `region_name` | string | required | Region name (fuzzy-matched via pg_trgm) |
-| `float_type` | string | — | Optional filter: `core`, `BGC`, `deep` |
-
-#### `GET /api/v1/search/datasets/{dataset_id}/summary`
-
-Rich summary for a single active dataset including bbox as GeoJSON.
-
-#### `GET /api/v1/search/datasets/summaries`
-
-Lightweight summary cards for all active datasets. Summary text truncated to 300 chars.
-
-#### `POST /api/v1/search/reindex/{dataset_id}`
-
-**Requires admin JWT.** Re-embeds the dataset and all its floats, then refreshes materialized views.
+| "Show temperature profiles near Sri Lanka in 2023" | Generates SQL, queries the database, renders a depth profile chart |
+| "How many BGC floats are in the Arabian Sea?" | Resolves the region, counts matching floats, returns the answer |
+| "Export this as NetCDF" | Packages the result as an ARGO-compliant NetCDF file for download |
+| Clicks a float on the map | Shows float metadata, mini profile chart, and deep-links to chat |
 
 ---
 
@@ -237,24 +38,24 @@ Lightweight summary cards for all active datasets. Summary text truncated to 300
 
 ### Prerequisites
 
-- **Docker** (PostgreSQL + PostGIS, PgBouncer, Redis, MinIO)
-- **Python 3.11+**
+- Docker and Docker Compose
+- Python 3.11+
+- Node.js 18+
 
 ### 1. Start infrastructure
 
 ```bash
-cd floatchat
 docker-compose up -d
 ```
 
 | Service | Port | Purpose |
-|---------|------|---------|
-| PostgreSQL 15 + PostGIS | 5432 | Primary database (direct access for migrations only) |
-| PgBouncer | 5433 | Connection pooler — all app queries go here |
-| Redis 7 | 6379 | Celery broker, result backend & query cache |
-| MinIO | 9000 (API), 9001 (Console) | S3-compatible object storage |
+|---|---|---|
+| PostgreSQL 15 + PostGIS | 5432 | Primary database (migrations only) |
+| PgBouncer | 5433 | Connection pooler — all app queries |
+| Redis 7 | 6379 | Celery broker, result backend, query cache |
+| MinIO | 9000 / 9001 | Object storage (raw files + exports) |
 
-### 2. Install Python dependencies
+### 2. Install backend dependencies
 
 ```bash
 cd backend
@@ -265,21 +66,14 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env with your database, Redis, S3, and optional OpenAI credentials
+# Edit .env — minimum required: DATABASE_URL, REDIS_URL, JWT_SECRET_KEY (32+ chars)
 ```
 
-### 4. Run database migrations
+### 4. Run migrations
 
 ```bash
 alembic upgrade head
 ```
-
-This runs all current migrations:
-- **001** — Feature 1 schema (floats, profiles, measurements, datasets, float_positions, ingestion_jobs)
-- **002** — Feature 2 schema (BIGINT columns, ocean_regions, dataset_versions, indexes, materialized views, readonly user)
-- **003** — Feature 3 schema (pgvector extension, dataset_embeddings, float_embeddings, HNSW indexes)
-- **004** — Feature 5 schema (chat_sessions, chat_messages)
-- **005** — Feature 13 schema (users, password_reset_tokens)
 
 ### 5. Seed ocean regions
 
@@ -287,9 +81,9 @@ This runs all current migrations:
 python scripts/seed_ocean_regions.py
 ```
 
-Loads Natural Earth 1:10m ocean basin polygons into the `ocean_regions` table. Required for `get_profiles_by_basin()` queries.
+Required for basin-level spatial queries (Arabian Sea, Bay of Bengal, etc.).
 
-### 6. Start the API server
+### 6. Start the backend
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -301,1005 +95,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 celery -A celery_worker.celery worker --loglevel=info --pool=solo
 ```
 
-### 8. (Optional) Start Celery beat for periodic stale-job retry
-
-```bash
-celery -A celery_worker.celery beat --loglevel=info
-```
-
----
-
-## API Endpoints
-
-The ingestion endpoints below require **admin JWT** authentication via `Authorization: Bearer <token>`.
-
-### `POST /api/v1/datasets/upload`
-
-Upload a `.nc`, `.nc4`, or `.zip` file (max 2 GB). Returns `202 Accepted` immediately with a `job_id`. All processing is async via Celery.
-
-```
-Content-Type: multipart/form-data
-Form fields:
-  file          (required) — .nc, .nc4, or .zip
-  dataset_name  (optional) — human-readable name
-```
-
-**Response 202:**
-```json
-{
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "dataset_id": 1,
-  "status": "pending",
-  "message": "File received. Ingestion started."
-}
-```
-
-**Error responses:**
-| Status | Condition |
-|--------|-----------|
-| 400 | Unsupported file type |
-| 413 | File exceeds 2 GB limit |
-| 503 | S3 staging failure |
-
-### `GET /api/v1/datasets/jobs/{job_id}`
-
-Poll ingestion job status.
-
-**Response 200:**
-```json
-{
-  "job_id": "...",
-  "status": "running",
-  "progress_pct": 45,
-  "profiles_ingested": 220,
-  "profiles_total": 490,
-  "errors": [],
-  "dataset_id": 12,
-  "started_at": "2024-01-15T10:30:00Z",
-  "completed_at": null
-}
-```
-
-### `GET /api/v1/datasets/jobs`
-
-Paginated job listing with optional status filter.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `status_filter` | string | — | `pending`, `running`, `succeeded`, or `failed` |
-| `limit` | int | 20 | Max results (capped at 100) |
-| `offset` | int | 0 | Pagination offset |
-
-### `POST /api/v1/datasets/jobs/{job_id}/retry`
-
-Retry a failed job. Returns 400 if job status is not `failed`. Resets progress and re-dispatches the Celery task.
-
-### `GET /health`
-
-No authentication required. Returns `{"status": "ok"}`.
-
----
-
-## Feature 4: Natural Language Query Engine
-
-> _"The NL Query Engine converts natural language questions about ocean data into validated, read-only PostgreSQL queries — executed safely on a readonly connection."_
-> — Feature 4 PRD §1.1
-
-Building on Features 1–3, Feature 4 adds a **multi-provider LLM pipeline** (DeepSeek, Qwen, Gemma, OpenAI), **SQL validation** (syntax + read-only + whitelist), **geography resolution**, **conversation context** via Redis, and a **benchmarking endpoint** — exposed through 2 REST API endpoints.
-
-### What Was Built
-
-| Component | Description |
-|-----------|-------------|
-| **Schema Prompt** | Module-level constant documenting all 10 tables + 2 MVs with types, FKs, JOIN patterns, and 25 few-shot examples. Sent as the LLM system message. |
-| **Geography Module** | Scans NL queries for 50 ocean region names (oceans, seas, gulfs, straits). Returns bounding boxes for spatial `ST_MakeEnvelope` queries. |
-| **Context Module** | Redis-backed conversation history (get/append/clear). Graceful no-op when Redis is unavailable. |
-| **Validator Module** | 3-check SQL validation: syntax (sqlglot parse), read-only (AST walk), table whitelist. Plus advisory geography cast warning. |
-| **Executor Module** | Safe SQL execution on `get_readonly_db()`. Auto-wraps with LIMIT via subquery. Row estimation via `EXPLAIN (FORMAT JSON)`. |
-| **Pipeline Module** | Core LLM orchestration — ALL LLM calls live here. Prompt assembly → LLM call → SQL extraction → validation → retry loop (max 3). Separate interpretation call. |
-| **Multi-Provider LLM** | 4 providers via OpenAI-compatible API: DeepSeek (`deepseek-reasoner`), Qwen (`qwq-32b`), Gemma (`gemma3`), OpenAI (`gpt-4o`). Factory pattern with provider-specific base URLs and API keys. |
-| **API Router** | 2 endpoints: `POST /query` (full flow with execution) and `POST /query/benchmark` (SQL generation across providers, no execution). |
-
-### Architecture
-
-```
-    User: "How many BGC floats are in the Arabian Sea?"
-          │
-          ▼
-    POST /api/v1/query
-          │
-          ├─ 1. Geography resolution (→ bounding box)
-          ├─ 2. Conversation context (Redis)
-          ├─ 3. NL-to-SQL pipeline
-          │     ├─ Build prompt (schema + context + geography + few-shot)
-          │     ├─ LLM call (OpenAI-compatible API)
-          │     ├─ Extract SQL from response
-          │     ├─ 3-check validation (syntax → read-only → whitelist)
-          │     └─ Retry loop (up to 3 attempts with error injection)
-          ├─ 4. Row estimation (EXPLAIN JSON) → confirmation if >50K rows
-          ├─ 5. Execute SQL (readonly session, LIMIT wrapped)
-          ├─ 6. Interpret results (separate LLM call)
-          └─ 7. Store context (after execution with real row_count)
-          │
-          ▼
-    JSON response: { sql, columns, rows, interpretation, ... }
-```
-
-### Query API Endpoints
-
-All query endpoints are mounted at `/api/v1/query/`.
-
-#### `POST /api/v1/query`
-
-Full NL-to-SQL pipeline: generate SQL → validate → execute → interpret.
-
-**Request body:**
-```json
-{
-  "query": "How many BGC floats are deployed in the Arabian Sea?",
-  "session_id": "optional-session-uuid",
-  "provider": "deepseek",
-  "model": null,
-  "confirm_execution": null
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `query` | string | required | Natural language question (1–2000 chars) |
-| `session_id` | string | auto-generated | Session ID for conversation context |
-| `provider` | string | config default | Override LLM provider |
-| `model` | string | provider default | Override LLM model |
-| `confirm_execution` | bool | null | Set `true` to confirm large result execution |
-
-**Response 200:**
-```json
-{
-  "session_id": "a1b2c3d4-...",
-  "sql": "SELECT COUNT(*) FROM floats WHERE float_type = 'BGC' ...",
-  "columns": ["count"],
-  "rows": [{"count": 42}],
-  "row_count": 1,
-  "truncated": false,
-  "interpretation": "There are 42 BGC floats deployed in the Arabian Sea.",
-  "confirmation_required": null,
-  "estimated_rows": null,
-  "error": null,
-  "provider": "deepseek",
-  "model": "deepseek-reasoner"
-}
-```
-
-**Confirmation flow:** If `EXPLAIN` estimates >50,000 rows, the response includes `confirmation_required: true` and `estimated_rows`. Re-send the same request with `confirm_execution: true` to proceed.
-
-#### `POST /api/v1/query/benchmark`
-
-Compare SQL generation across multiple LLM providers. **SQL generation only — no execution.**
-
-**Request body:**
-```json
-{
-  "query": "Show all floats deployed after 2024",
-  "providers": ["deepseek", "qwen", "openai"]
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `query` | string | required | Natural language question |
-| `providers` | list[string] | all configured | Providers to benchmark |
-
-**Response 200:**
-```json
-{
-  "query": "Show all floats deployed after 2024",
-  "results": [
-    {
-      "provider": "deepseek",
-      "model": "deepseek-reasoner",
-      "sql": "SELECT * FROM floats WHERE ...",
-      "valid": true,
-      "validation_errors": [],
-      "latency_ms": 1234.5,
-      "error": null
-    },
-    {
-      "provider": "qwen",
-      "model": "qwq-32b",
-      "sql": "SELECT * FROM floats WHERE ...",
-      "valid": true,
-      "validation_errors": [],
-      "latency_ms": 2345.6,
-      "error": null
-    }
-  ]
-}
-```
-
-### Multi-Provider LLM System
-
-All 4 providers use the OpenAI-compatible chat completions API. The `get_llm_client()` factory creates the appropriate client based on provider name.
-
-| Provider | Default Model | Base URL | Key Setting |
-|----------|--------------|----------|-------------|
-| `deepseek` | `deepseek-reasoner` | `https://api.deepseek.com/v1` | `DEEPSEEK_API_KEY` |
-| `qwen` | `qwq-32b` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `QWEN_API_KEY` |
-| `gemma` | `gemma3` | `https://generativelanguage.googleapis.com/v1beta/openai` | `GEMMA_API_KEY` |
-| `openai` | `gpt-4o` | default OpenAI URL | `OPENAI_API_KEY` |
-
-### SQL Validation Pipeline
-
-Every generated SQL statement passes through 3 mandatory checks before execution:
-
-1. **Syntax check** — Parsed with `sqlglot` (PostgreSQL dialect). Must produce a valid AST.
-2. **Read-only check** — AST walked for write nodes (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `MERGE`, `TRUNCATE`, `GRANT`, `REVOKE`). Any match → rejected.
-3. **Table whitelist** — All referenced tables must be in the allowed set (10 tables + 2 MVs). CTE aliases are excluded from the check.
-
-If validation fails, the error is injected back into the prompt and the LLM retries (up to `QUERY_MAX_RETRIES` attempts). After all retries are exhausted, the query is **never executed** — a structured error is returned.
-
-### Feature 4 Environment Variables
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `QUERY_LLM_PROVIDER` | string | `deepseek` | Default LLM provider |
-| `QUERY_LLM_MODEL` | string | `deepseek-reasoner` | Default model for the chosen provider |
-| `QUERY_LLM_TEMPERATURE` | float | `0.0` | LLM temperature |
-| `QUERY_LLM_MAX_TOKENS` | int | `2048` | Max tokens per LLM response |
-| `QUERY_MAX_RETRIES` | int | `3` | Max validation retry attempts |
-| `QUERY_MAX_ROWS` | int | `1000` | Max rows returned in response |
-| `QUERY_CONFIRMATION_THRESHOLD` | int | `50000` | Estimated rows that trigger confirmation |
-| `QUERY_CONTEXT_TTL` | int | `3600` | Conversation context TTL (seconds) |
-| `QUERY_CONTEXT_MAX_TURNS` | int | `20` | Max turns in conversation history |
-| `QUERY_BENCHMARK_TIMEOUT` | int | `60` | Total timeout for benchmark endpoint (seconds) |
-| `GEOGRAPHY_FILE_PATH` | string | `data/geography_lookup.json` | Path to geography lookup file |
-| `DEEPSEEK_API_KEY` | string | None | DeepSeek API key |
-| `DEEPSEEK_BASE_URL` | string | `https://api.deepseek.com/v1` | DeepSeek API base URL |
-| `QWEN_API_KEY` | string | None | Qwen API key |
-| `QWEN_BASE_URL` | string | `https://dashscope.aliyuncs.com/compatible-mode/v1` | Qwen API base URL |
-| `GEMMA_API_KEY` | string | None | Gemma API key |
-| `GEMMA_BASE_URL` | string | `https://generativelanguage.googleapis.com/v1beta/openai` | Gemma API base URL |
-
----
-
-## Feature 5: Conversational Chat Interface
-
-> _"Feature 5 wraps Feature 4's power in a conversational interface that feels familiar, approachable, and intelligent."_
-> — Feature 5 PRD §1.2
-
-Feature 5 adds a chat backend with session management, SSE streaming, message persistence, and suggestion generation, with a Next.js 14 frontend application in the same repository.
-
-### What Was Built (Backend)
-
-| Component | Description |
-|-----------|-------------|
-| **Migration 004** | Creates `chat_sessions` and `chat_messages` tables with FK, index on `(session_id, created_at)` |
-| **Chat Router** | 9 endpoints at `/api/v1/chat/`: session CRUD, message history, SSE query, confirmation, suggestions |
-| **Suggestions Module** | `generate_load_time_suggestions()` — 4-6 example queries from dataset metadata, Redis-cached (1hr TTL), fallback on failure |
-| **Follow-Ups Module** | `generate_follow_up_suggestions()` — LLM-based 2-3 follow-up questions per result, never blocks response |
-| **SSE Streaming** | Real-time event stream: `thinking` → `interpreting` → `executing` → `results` → `suggestions` → `done` |
-| **CORS Middleware** | Configured for frontend origin via `CORS_ORIGINS` setting |
-
-### Database Tables
-
-**`chat_sessions`** — One row per conversation. Columns: `session_id` (UUID PK), `user_identifier`, `name`, `created_at`, `last_active_at`, `is_active`, `message_count`.
-
-**`chat_messages`** — One row per message. Columns: `message_id` (UUID PK), `session_id` (FK), `role`, `content`, `nl_query`, `generated_sql`, `result_metadata` (JSONB), `follow_up_suggestions` (JSONB), `error` (JSONB), `status`, `created_at`. Indexed on `(session_id, created_at)`.
-
-### Chat API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/chat/sessions` | Create a new session |
-| GET | `/api/v1/chat/sessions` | List sessions for user |
-| GET | `/api/v1/chat/sessions/{id}` | Get session details |
-| PATCH | `/api/v1/chat/sessions/{id}` | Rename session |
-| DELETE | `/api/v1/chat/sessions/{id}` | Soft delete session |
-| GET | `/api/v1/chat/sessions/{id}/messages` | Paginated message history |
-| POST | `/api/v1/chat/sessions/{id}/query` | SSE query stream |
-| POST | `/api/v1/chat/sessions/{id}/query/confirm` | Confirm large query |
-| GET | `/api/v1/chat/suggestions` | Load-time suggestions |
-
-All chat endpoints require a valid bearer access token and resolve the user from JWT `sub`.
-`X-User-ID` is retained only on `/api/v1/auth/signup` and `/api/v1/auth/login` to migrate anonymous sessions created before authentication.
-
-### Feature 5 Environment Variables
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `CHAT_SUGGESTIONS_CACHE_TTL_SECONDS` | int | `3600` | Redis TTL for load-time suggestions |
-| `CHAT_SUGGESTIONS_COUNT` | int | `6` | Number of suggestions to generate |
-| `CHAT_MESSAGE_PAGE_SIZE` | int | `50` | Default messages per page |
-| `FOLLOW_UP_LLM_TEMPERATURE` | float | `0.7` | Temperature for follow-up generation |
-| `FOLLOW_UP_LLM_MAX_TOKENS` | int | `150` | Max tokens for follow-up generation |
-| `CORS_ORIGINS` | string | `http://localhost:3000` | Allowed CORS origins (comma-separated) |
-
-### Migration
-
-```bash
-cd backend
-alembic upgrade head   # Runs 004_chat_interface.py
-```
-
-### Feature 5 Tests
-
-```bash
-pytest tests/test_chat_api.py tests/test_suggestions.py -v
-```
-
-- `test_chat_api.py` — 40 tests (session CRUD, SSE streaming, confirmation, error handling)
-- `test_suggestions.py` — 28 tests (load-time suggestions, caching, follow-ups, fallbacks)
-
----
-
-## Feature 13: Authentication & Account Management
-
-Feature 13 adds account-based authentication across backend and frontend, including JWT access tokens, HttpOnly refresh cookies, password reset flows, and authenticated route protection.
-
-### What Was Built
-
-| Component | Description |
-|-----------|-------------|
-| **Migration 005** | Creates `users` and `password_reset_tokens` tables with email uniqueness and reset-token indexes |
-| **Auth Router** | 7 endpoints at `/api/v1/auth/`: signup, login, logout, me, refresh, forgot-password, reset-password |
-| **JWT Model** | Short-lived bearer access token + refresh cookie (`floatchat_refresh`) with token type validation |
-| **Password Security** | Password hashing + verification, non-enumerating forgot-password response, one-time reset tokens |
-| **Frontend Integration** | Middleware guards, auth store bootstrap via refresh, and automatic 401 refresh-retry in API client |
-
-### Authentication Model
-
-- **Public:** `/health`, `GET /api/v1/search/*`, `/api/v1/auth/signup`, `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`
-- **Authenticated user:** `/api/v1/query/*`, `/api/v1/chat/*`, `/api/v1/map/*`, `/api/v1/auth/me`, `/api/v1/auth/logout`
-- **Admin only:** `/api/v1/datasets/*`, `POST /api/v1/search/reindex/{dataset_id}`
-
-### Feature 13 Environment Variables
-
-| Variable | Type | Default | Description |
-|----------|------|---------|-------------|
-| `JWT_SECRET_KEY` | string | — | Required signing key for Feature 13 access/refresh JWTs (min 32 chars) |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | int | `15` | Access token lifetime |
-| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | int | `7` | Refresh cookie/token lifetime |
-| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | int | `60` | Password reset token lifetime |
-| `FRONTEND_URL` | string | `http://localhost:3000` | Base URL used to build reset-password links |
-
----
-
-## Pipeline Modules
-
-### Parser (`app/ingestion/parser.py`)
-
-Opens NetCDF files with `xarray.open_dataset(decode_cf=False, mask_and_scale=False)` — no auto-decoding. Iterates over the `N_PROF` dimension to extract all profiles.
-
-**Core ARGO variables extracted:**
-
-| ARGO Variable | DB Column | Notes |
-|---|---|---|
-| `PLATFORM_NUMBER` | `platform_number` | Byte string → decoded + stripped |
-| `CYCLE_NUMBER` | `cycle_number` | Integer |
-| `JULD` | `timestamp` | Days since 1950-01-01 → Python datetime |
-| `LATITUDE` / `LONGITUDE` | `latitude` / `longitude` | Validated: lat ±90, lon ±180 |
-| `DATA_MODE` | `data_mode` | `R`, `A`, or `D` |
-| `PRES` / `TEMP` / `PSAL` | Per-depth measurements | With QC flag columns |
-
-**BGC variables (optional, NULL if absent):** `DOXY`, `CHLA`, `NITRATE`, `PH_IN_SITU_TOTAL`, `BBP700`, `DOWNWELLING_IRRADIANCE`
-
-**Key conventions handled:**
-- Fill values read from each variable's `_FillValue` attribute (never hardcoded as `99999.0`)
-- QC flags: byte → char → int (e.g., `b'1'` → `'1'` → `1`)
-- `JULD` fill value → `timestamp = None`, `timestamp_missing = True`
-- Invalid coordinates → `position_invalid = True`
-
-### Cleaner (`app/ingestion/cleaner.py`)
-
-Flags outliers without removing data. Measurements outside scientific bounds get `is_outlier = True`:
-
-| Variable | Valid Range |
-|----------|-------------|
-| Temperature | -2.5°C to 40°C |
-| Salinity | 0 to 42 PSU |
-| Pressure | 0 to 12,000 dbar |
-| Dissolved oxygen | 0 to 600 µmol/kg |
-
-Also validates `data_mode` — invalid values default to `R`.
-
-### Writer (`app/ingestion/writer.py`)
-
-All writes are idempotent:
-- **Floats:** `INSERT ... ON CONFLICT DO NOTHING`
-- **Profiles:** `INSERT ... ON CONFLICT (platform_number, cycle_number) DO UPDATE`
-- **Measurements:** Delete existing for profile, then `bulk_insert_mappings` in batches of `DB_INSERT_BATCH_SIZE`
-- **PostGIS geometry:** Computed from lat/lon via `shapely` + `geoalchemy2` for valid positions
-- **Float positions:** Upserted after each profile for the map spatial index
-
-**Transaction rule:** Writer never calls `commit()` — only `flush()`. The Celery task manages the single transaction boundary.
-
-### Metadata (`app/ingestion/metadata.py`)
-
-After all profiles are written, computes dataset statistics:
-- `date_range_start` / `date_range_end` from profile timestamps
-- `float_count`, `profile_count`
-- `variable_list` (JSONB)
-- `bbox` via PostGIS `ST_ConvexHull(ST_Collect(geom))`
-
-**LLM summary:** If `OPENAI_API_KEY` is set, calls GPT-4o for a 2–3 sentence dataset summary. On any failure, falls back to a template string. LLM errors never fail the ingestion job.
-
-### Celery Tasks (`app/ingestion/tasks.py`)
-
-**`ingest_file_task(job_id, file_path, dataset_id)`** — 8-step pipeline with progress tracking:
-
-| Step | Progress | Action |
-|------|----------|--------|
-| 1 | 0% | Set job to `running` |
-| 2 | 5% | Upload raw file to S3 (abort on failure) |
-| 3 | 10% | Validate NetCDF structure |
-| 4 | 20% | Parse all profiles |
-| 5 | 40% | Clean & normalize |
-| 6 | 80% | DB transaction: upsert all profiles + measurements |
-| 7 | 90% | Compute metadata + LLM summary |
-| 8 | 100% | Set job to `succeeded` |
-
-**`ingest_zip_task`** — Extracts ZIP, validates each `.nc`/`.nc4`, dispatches `ingest_file_task` per file. Invalid files are logged but don't fail the batch.
-
-**Retry:** `autoretry_for=(ConnectionError, OSError)`, `max_retries=3`, exponential backoff. Validation/parse errors are permanent failures (no retry).
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+psycopg2://...localhost:5433/...` | PostgreSQL via PgBouncer (all app queries) |
-| `DATABASE_URL_DIRECT` | `postgresql+psycopg2://...localhost:5432/...` | Direct PostgreSQL (Alembic migrations only) |
-| `READONLY_DATABASE_URL` | `postgresql+psycopg2://floatchat_readonly:...@localhost:5433/...` | Readonly user via PgBouncer (query layer) |
-| `READONLY_DB_PASSWORD` | `floatchat_readonly` | Password for the `floatchat_readonly` DB user |
-| `DB_POOL_SIZE` | `10` | SQLAlchemy connection pool size |
-| `DB_MAX_OVERFLOW` | `20` | Max overflow connections beyond pool size |
-| `DB_POOL_RECYCLE` | `3600` | Seconds before a pooled connection is recycled |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
-| `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Celery broker |
-| `CELERY_RESULT_BACKEND` | `redis://localhost:6379/1` | Celery result store |
-| `REDIS_CACHE_TTL_SECONDS` | `300` | Query cache TTL (seconds) |
-| `REDIS_CACHE_MAX_ROWS` | `10000` | Max rows to cache (larger results skip cache) |
-| `S3_ENDPOINT_URL` | — | MinIO/S3 endpoint (set for local dev) |
-| `S3_ACCESS_KEY` | `minioadmin` | S3 access key |
-| `S3_SECRET_KEY` | `minioadmin` | S3 secret key |
-| `S3_BUCKET_NAME` | `floatchat-raw-uploads` | Upload staging bucket |
-| `S3_REGION` | `us-east-1` | S3 region |
-| `OPENAI_API_KEY` | — | Optional: enables LLM summary generation |
-| `LLM_MODEL` | `gpt-4o` | LLM model for dataset summaries |
-| `LLM_TIMEOUT_SECONDS` | `30` | LLM request timeout |
-| `MAX_UPLOAD_SIZE_BYTES` | `2147483648` | Max upload size (2 GB) |
-| `DB_INSERT_BATCH_SIZE` | `1000` | Measurement insert batch size |
-| `SECRET_KEY` | `dev-secret-...` | Legacy JWT signing key used by older admin auth helpers |
-| `JWT_SECRET_KEY` | — | Primary JWT signing key for Feature 13 access/refresh tokens (**required**) |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token expiry (minutes) |
-| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token expiry (days) |
-| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | `60` | Password reset token expiry (minutes) |
-| `FRONTEND_URL` | `http://localhost:3000` | Frontend URL used for reset-password links |
-| `SENTRY_DSN` | — | Optional: Sentry error tracking |
-| `DEBUG` | `False` | Enables `/docs` Swagger UI |
-| `LOG_LEVEL` | `INFO` | structlog level |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model name |
-| `EMBEDDING_DIMENSIONS` | `1536` | Embedding vector dimensions |
-| `EMBEDDING_BATCH_SIZE` | `100` | Max texts per embedding API call |
-| `SEARCH_SIMILARITY_THRESHOLD` | `0.3` | Min cosine similarity to include in results |
-| `SEARCH_DEFAULT_LIMIT` | `10` | Default search result limit |
-| `SEARCH_MAX_LIMIT` | `50` | Maximum allowed search result limit |
-| `RECENCY_BOOST_DAYS` | `90` | Datasets ingested within this many days get a score boost |
-| `RECENCY_BOOST_VALUE` | `0.05` | Score boost for recent datasets |
-| `REGION_MATCH_BOOST_VALUE` | `0.10` | Score boost when region filter matches bbox |
-| `FUZZY_MATCH_THRESHOLD` | `0.4` | pg_trgm similarity threshold for region name matching |
-
----
-
-## Database Schema
-
-14 tables + 2 materialized views created via Alembic migrations (`001_initial_schema.py` + `002_ocean_database.py` + `003_metadata_search.py` + `004_chat_interface.py` + `005_auth.py`). PostGIS, pgcrypto, pgvector, and pg_trgm extensions enabled.
-
-### `floats`
-One record per unique ARGO float, keyed by `platform_number`.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `float_id` | `SERIAL PK` | |
-| `platform_number` | `VARCHAR(20) UNIQUE NOT NULL` | |
-| `wmo_id` | `VARCHAR(20)` | |
-| `float_type` | `VARCHAR(10)` | `core`, `BGC`, or `deep` |
-| `deployment_date` | `TIMESTAMPTZ` | |
-| `deployment_lat` / `deployment_lon` | `DOUBLE PRECISION` | |
-| `country`, `program` | `VARCHAR` | |
-| `created_at`, `updated_at` | `TIMESTAMPTZ` | Auto-set |
-
-### `datasets`
-One record per ingested file or batch.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `dataset_id` | `SERIAL PK` | |
-| `name`, `source_filename` | `VARCHAR` | |
-| `raw_file_path` | `VARCHAR(1000)` | S3 key |
-| `date_range_start` / `date_range_end` | `TIMESTAMPTZ` | Computed post-ingestion |
-| `bbox` | `GEOGRAPHY(POLYGON, 4326)` | Convex hull of profiles |
-| `float_count`, `profile_count` | `INTEGER` | |
-| `variable_list` | `JSONB` | e.g., `["TEMP","PSAL","DOXY"]` |
-| `summary_text` | `TEXT` | LLM-generated or fallback |
-| `is_active` | `BOOLEAN` | Default `TRUE` |
-| `dataset_version` | `INTEGER` | Default `1` |
-
-### `profiles`
-One record per float cycle. Unique on `(platform_number, cycle_number)`.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `profile_id` | `BIGSERIAL PK` | Upgraded to BIGINT in migration 002 |
-| `float_id` | `FK → floats` | |
-| `platform_number` | `VARCHAR(20)` | |
-| `cycle_number` | `INTEGER` | |
-| `juld_raw` | `DOUBLE PRECISION` | Raw Julian days |
-| `timestamp` | `TIMESTAMPTZ` | Converted from JULD |
-| `timestamp_missing` | `BOOLEAN` | Fill value in JULD |
-| `latitude` / `longitude` | `DOUBLE PRECISION` | |
-| `position_invalid` | `BOOLEAN` | Out-of-range coords |
-| `geom` | `GEOGRAPHY(POINT, 4326)` | GiST indexed |
-| `data_mode` | `CHAR(1)` | `R`, `A`, or `D` |
-| `dataset_id` | `FK → datasets` | |
-
-**Indexes:** GiST on `geom`, BRIN on `timestamp`, B-tree on `float_id`.
-
-### `measurements`
-One record per depth level within a profile.
-
-| Column | Type |
-|--------|------|
-| `measurement_id` | `BIGSERIAL PK` |
-| `profile_id` | `FK → profiles (ON DELETE CASCADE)` BIGINT |
-| `pressure`, `temperature`, `salinity` | `REAL` |
-| `dissolved_oxygen`, `chlorophyll`, `nitrate`, `ph`, `bbp700`, `downwelling_irradiance` | `REAL` (BGC, nullable) |
-| `pres_qc`, `temp_qc`, `psal_qc`, `doxy_qc`, `chla_qc`, `nitrate_qc`, `ph_qc` | `SMALLINT` |
-| `is_outlier` | `BOOLEAN` |
-
-**Indexes:** B-tree on `profile_id` and `pressure`.
-
-### `float_positions`
-Lightweight spatial index for map queries. One record per `(platform_number, cycle_number)`.
-
-| Column | Type |
-|--------|------|
-| `position_id` | `SERIAL PK` |
-| `platform_number`, `cycle_number` | Unique together |
-| `timestamp` | `TIMESTAMPTZ` |
-| `latitude` / `longitude` | `DOUBLE PRECISION` |
-| `geom` | `GEOGRAPHY(POINT, 4326)` — GiST indexed |
-
-### `ingestion_jobs`
-Tracks every ingestion job through `pending → running → succeeded / failed`.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `job_id` | `UUID PK` | Auto-generated via `gen_random_uuid()` |
-| `dataset_id` | `FK → datasets` | |
-| `original_filename` | `VARCHAR(500)` | |
-| `raw_file_path` | `VARCHAR(1000)` | S3 key |
-| `status` | `VARCHAR(20)` | `pending`, `running`, `succeeded`, `failed` |
-| `progress_pct` | `INTEGER` | 0–100 |
-| `profiles_total` / `profiles_ingested` | `INTEGER` | |
-| `error_log` | `TEXT` | Full traceback on failure |
-| `errors` | `JSONB` | Per-file error array for ZIP ingestion |
-
-### `ocean_regions` _(Feature 2)_
-Named ocean basin polygons for spatial containment queries.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `region_id` | `SERIAL PK` | |
-| `name` | `VARCHAR(100) UNIQUE NOT NULL` | e.g., `North Atlantic Ocean` |
-| `geom` | `GEOGRAPHY(MULTIPOLYGON, 4326)` | GiST indexed |
-| `created_at` | `TIMESTAMPTZ` | Auto-set |
-
-### `dataset_versions` _(Feature 2)_
-Version history for datasets.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `version_id` | `SERIAL PK` | |
-| `dataset_id` | `FK → datasets` | |
-| `version_number` | `INTEGER NOT NULL` | Monotonically increasing per dataset |
-| `created_by` | `VARCHAR(100)` | |
-| `notes` | `TEXT` | Optional description of changes |
-| `created_at` | `TIMESTAMPTZ` | Auto-set |
-
-**Unique constraint:** `(dataset_id, version_number)`
-
-### Materialized Views _(Feature 2)_
-
-| View | Description | Refresh |
-|------|-------------|---------|
-| `mv_float_latest_position` | Latest position per float (platform_number, lat, lon, timestamp) | After each ingestion run + after indexing |
-| `mv_dataset_stats` | Per-dataset aggregates (profile count, date range, float count) | After each ingestion run + after indexing |
-
-Both are queried directly by the DAL — never recomputed inline.
-
-### `dataset_embeddings` _(Feature 3)_
-One row per dataset, upserted on each indexing run.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `embedding_id` | `SERIAL PK` | |
-| `dataset_id` | `FK → datasets UNIQUE` | One embedding per dataset |
-| `embedding_text` | `TEXT NOT NULL` | Combined summary + descriptor |
-| `embedding` | `vector(1536) NOT NULL` | OpenAI text-embedding-3-small |
-| `status` | `VARCHAR(20)` | `indexed` or `embedding_failed` |
-| `created_at`, `updated_at` | `TIMESTAMPTZ` | Auto-set |
-
-**Index:** HNSW on `embedding` with `vector_cosine_ops` (m=16, ef_construction=64).
-
-### `float_embeddings` _(Feature 3)_
-One row per float, upserted on each indexing run.
-
-| Column | Type | Notes |
-|--------|------|-------|
-| `embedding_id` | `SERIAL PK` | |
-| `float_id` | `FK → floats UNIQUE` | One embedding per float |
-| `embedding_text` | `TEXT NOT NULL` | Float type + region + variables |
-| `embedding` | `vector(1536) NOT NULL` | OpenAI text-embedding-3-small |
-| `status` | `VARCHAR(20)` | `indexed` or `embedding_failed` |
-| `created_at`, `updated_at` | `TIMESTAMPTZ` | Auto-set |
-
-**Index:** HNSW on `embedding` with `vector_cosine_ops` (m=16, ef_construction=64).
-
----
-
-## Error Handling
-
-From the PRD §8:
-
-| Error Type | Handling |
-|---|---|
-| File too large (>2 GB) | Reject at upload, HTTP 413 |
-| Invalid file type | Reject at upload, HTTP 400 |
-| NetCDF cannot be opened | Mark job `failed`, store error |
-| Missing required ARGO variable | Mark file `failed`, store variable name |
-| Invalid coordinates | Mark profile `position_invalid = True`, continue |
-| Fill value in required field | Store as `NULL`, continue |
-| DB connection failure | Retry 3× with exponential backoff; fail if exhausted |
-| S3 upload failure | Abort job immediately |
-| LLM summary generation fails | Use fallback template, do not fail job |
-| Duplicate profile (upsert) | Update existing record |
-
----
-
-## Project Structure
-
-```
-backend/
-├── alembic/                    # Database migrations
-│   └── versions/
-│       ├── 001_initial_schema.py
-│       ├── 002_ocean_database.py     # Feature 2: BIGINT, ocean_regions, MVs, indexes
-│       └── 003_metadata_search.py    # Feature 3: pgvector, embedding tables, HNSW indexes
-├── app/
-│   ├── main.py                 # FastAPI app, structlog, Sentry, /health
-│   ├── config.py               # pydantic-settings (54 env vars)
-│   ├── celery_app.py           # Celery configuration (ingestion + search tasks)
-│   ├── api/
-│   │   ├── auth.py             # JWT validation (admin role required)
-│   │   └── v1/
-│   │       ├── ingestion.py    # Upload + job management (4 endpoints)
-│   │       ├── search.py       # Feature 3: Search + discovery (6 endpoints)
-│   │       └── query.py        # Feature 4: NL query + benchmark (2 endpoints)
-│   ├── cache/                  # Feature 2
-│   │   └── redis_cache.py      # Query result cache (get/set/invalidate)
-│   ├── db/
-│   │   ├── models.py           # SQLAlchemy 2.x ORM (10 tables + 2 MV table objects)
-│   │   ├── session.py          # Engine, SessionLocal, get_db(), readonly engine, get_readonly_db()
-│   │   └── dal.py              # Feature 2: Data Access Layer (10 query functions)
-│   ├── ingestion/
-│   │   ├── parser.py           # NetCDF → structured dicts
-│   │   ├── cleaner.py          # Outlier flagging & normalization
-│   │   ├── writer.py           # Idempotent DB upserts
-│   │   ├── metadata.py         # Dataset stats + LLM summary
-│   │   └── tasks.py            # Celery task definitions (+ search indexing trigger)
-│   ├── query/                  # Feature 4: Natural Language Query Engine
-│   │   ├── schema_prompt.py    # SCHEMA_PROMPT constant + ALLOWED_TABLES set
-│   │   ├── geography.py        # Geography name → bounding box resolution
-│   │   ├── context.py          # Redis-backed conversation context
-│   │   ├── validator.py        # 3-check SQL validation (syntax, read-only, whitelist)
-│   │   ├── executor.py         # Safe SQL execution + row estimation
-│   │   └── pipeline.py         # LLM orchestration (4 providers) + interpretation
-│   ├── search/                 # Feature 3: Metadata Search Engine
-│   │   ├── embeddings.py       # OpenAI embedding API caller + text builders
-│   │   ├── indexer.py          # DB → embedding text → upsert to embedding tables
-│   │   ├── search.py           # Semantic search with hybrid scoring
-│   │   ├── discovery.py        # Fuzzy region matching + float discovery + summaries
-│   │   └── tasks.py            # Celery task: index_dataset_task
-│   └── storage/
-│       └── s3.py               # S3/MinIO upload, download, presign
-├── pgbouncer/                  # Feature 2
-│   ├── pgbouncer.ini           # PgBouncer configuration
-│   └── userlist.txt            # PgBouncer auth file
-├── scripts/                    # Feature 2
-│   ├── seed_ocean_regions.py   # Seed ocean basin polygons
-│   ├── create_readonly_user.sql # SQL for floatchat_readonly user
-│   └── data/
-│       └── ocean_regions.geojson
-├── data/                       # Feature 4
-│   └── geography_lookup.json   # 50 ocean region bounding boxes
-├── celery_worker.py            # Celery worker entry point
-├── tests/
-│   ├── conftest.py             # Test fixture registration
-│   ├── conftest_feature2.py    # PostgreSQL + Redis fixtures for Feature 2
-│   ├── fixtures/
-│   │   ├── generate_fixtures.py
-│   │   ├── core_single_profile.nc
-│   │   ├── bgc_multi_profile.nc
-│   │   └── malformed_missing_psal.nc
-│   ├── test_parser.py          # 22 unit tests
-│   ├── test_cleaner.py         # 23 unit tests
-│   ├── test_writer.py          # 25 unit tests
-│   ├── test_api.py             # 17 API tests
-│   ├── test_integration.py     # 15 pipeline integration tests
-│   ├── test_schema.py          # 30 schema tests (Feature 2, requires Docker)
-│   ├── test_dal.py             # 21 DAL tests (Feature 2, requires Docker)
-│   ├── test_cache.py           # 11 cache tests (Feature 2, requires Redis)
-│   ├── test_embeddings.py      # 18 tests (Feature 3: text builders, batching, indexer)
-│   ├── test_search.py          # 12 tests (Feature 3: scoring, filtering, limits)
-│   ├── test_discovery.py       # 18 tests (Feature 3: fuzzy match, discovery, summaries)
-│   ├── test_validator.py       # 33 tests (Feature 4: syntax, readonly, whitelist, CTE)
-│   ├── test_executor.py        # 19 tests (Feature 4: execution, LIMIT, estimation)
-│   ├── test_geography.py       # 17 tests (Feature 4: geography resolution)
-│   ├── test_context.py         # 15 tests (Feature 4: Redis context operations)
-│   └── test_pipeline_f4.py     # 13 tests (Feature 4: LLM pipeline, extraction, retry)
-├── requirements.txt
-└── alembic.ini
-```
-
----
-
-## Tech Stack
-
-| Purpose | Library |
-|---|---|
-| Web framework | FastAPI |
-| ASGI server | uvicorn |
-| ORM | SQLAlchemy 2.x |
-| DB driver | psycopg2-binary |
-| Connection pooler | PgBouncer (edoburu/pgbouncer) |
-| Migrations | Alembic |
-| PostGIS ORM | GeoAlchemy2 |
-| Geometry | Shapely |
-| Vector embeddings | pgvector (PostgreSQL extension) |
-| Embedding API | openai (text-embedding-3-small) |
-| Vector ORM | pgvector.sqlalchemy |
-| Task queue | Celery |
-| Broker / Cache | Redis (redis-py) |
-| NetCDF parsing | xarray + netCDF4 |
-| Numerics | NumPy |
-| Object storage | boto3 (S3/MinIO) |
-| Structured logging | structlog |
-| Error tracking | sentry-sdk |
-| Config | pydantic-settings |
-| SQL parsing/validation | sqlglot |
-| LLM summaries | openai (GPT-4o) |
-| NL-to-SQL LLM | openai (multi-provider: DeepSeek, Qwen, Gemma, OpenAI) |
-| Auth | python-jose (JWT) |
-| Testing | pytest + pytest-asyncio + httpx |
-
----
-
-## Running Tests
-
-### Feature 1 Tests (no Docker required)
-
-```bash
-# All Feature 1 tests (102 tests)
-pytest tests/test_parser.py tests/test_cleaner.py tests/test_writer.py tests/test_api.py tests/test_integration.py -v
-
-# Unit tests only (70 tests)
-pytest tests/test_parser.py tests/test_cleaner.py tests/test_writer.py -v
-
-# API + integration tests (32 tests)
-pytest tests/test_api.py tests/test_integration.py -v
-```
-
-Feature 1 tests run against SQLite in-memory — no Docker required. PostGIS types (`GEOGRAPHY`, `JSONB`) are compiled to SQLite equivalents via `conftest.py` hooks.
-
-### Feature 2 Tests (Docker required)
-
-```bash
-# All Feature 2 tests (62 tests)
-pytest tests/test_schema.py tests/test_dal.py tests/test_cache.py -v
-```
-
-| Test File | Count | Requires |
-|-----------|-------|----------|
-| `test_schema.py` | 30 | PostgreSQL + PostGIS (Docker) |
-| `test_dal.py` | 21 | PostgreSQL + PostGIS (Docker) |
-| `test_cache.py` | 11 | Redis |
-
-**Important:** Feature 2 schema and DAL tests require Docker to be running (`docker-compose up -d`). When Docker is not available, these tests **skip gracefully** with `PostgreSQL not available: connection refused` — they do not fail. Cache tests require Redis.
-
-### Feature 3 Tests (no Docker required)
-
-```bash
-# All Feature 3 tests (48 tests)
-pytest tests/test_embeddings.py tests/test_search.py tests/test_discovery.py -v
-```
-
-| Test File | Count | Covers |
-|-----------|-------|--------|
-| `test_embeddings.py` | 18 | Text builders, batch API calls, indexer failure handling |
-| `test_search.py` | 12 | Score sorting, threshold filtering, recency boost, limits |
-| `test_discovery.py` | 18 | Fuzzy region matching, float discovery, dataset summaries |
-
-Feature 3 tests use **mocks** for OpenAI API calls and database access — no Docker or API keys required.
-
-### Feature 4 Tests (no Docker required)
-
-```bash
-# All Feature 4 tests (97 tests)
-pytest tests/test_validator.py tests/test_executor.py tests/test_geography.py tests/test_context.py tests/test_pipeline_f4.py -v
-```
-
-| Test File | Count | Covers |
-|-----------|-------|--------|
-| `test_validator.py` | 33 | Syntax check, read-only AST walk, table whitelist, CTE handling, geography cast |
-| `test_executor.py` | 19 | LIMIT detection/wrapping, SQL execution, row estimation |
-| `test_geography.py` | 17 | Region resolution, case insensitivity, longest-match, reload |
-| `test_context.py` | 15 | Get/append/clear context, TTL, max turns, None Redis |
-| `test_pipeline_f4.py` | 13 | LLM client factory, SQL extraction, retry loop, provider override |
-
-Feature 4 tests use **mocks** for all LLM calls and Redis — no Docker, API keys, or database required.
-
-### Full Suite
-
-```bash
-# All tests (309 tests: 102 Feature 1 + 62 Feature 2 + 48 Feature 3 + 97 Feature 4)
-pytest tests/ -v
-```
-
-When Docker is running: **309 passed, 0 failed**. When Docker is off: **258 passed, 58 skipped** (PG-dependent tests skip).
-
----
-
-## Non-Functional Requirements
-
-From the PRD §5:
-
-| Category | Requirement |
-|----------|-------------|
-| **Performance** | 100 MB file ingested in < 5 minutes; batch inserts via `bulk_insert_mappings` (never single-row loops); horizontal scaling via multiple Celery workers |
-| **Reliability** | Idempotent ingestion; single transaction per file (rollback on any failure); raw files staged to S3 before parsing |
-| **Observability** | Structured JSON logs at every pipeline stage (`upload_received`, `validation_passed`, `parsing_started`, `db_write_complete`, etc.) with `job_id`; errors sent to Sentry |
-| **Security** | Admin JWT required on all ingestion endpoints; S3 bucket not publicly accessible; files served only via presigned URLs |
-
----
-
-## Hard Rules
-
-These invariants are enforced across the codebase:
-
-1. **Upload endpoint never blocks.** Returns `job_id` within 2 seconds. All processing is async via Celery.
-2. **Never insert measurements in a single-row loop.** Always `bulk_insert_mappings` in batches.
-3. **Never hardcode `99999.0` as the only fill value.** Always read `_FillValue` from each NetCDF variable's attributes.
-4. **Never open NetCDF with xarray's auto-decoding.** Always `decode_cf=False, mask_and_scale=False`.
-5. **Never cast QC flag bytes directly to int.** Decode byte → char → int.
-6. **Never let LLM failures fail an ingestion job.** All LLM calls wrapped in try/except with fallback.
-7. **Never write partial data.** Single transaction per file; rollback everything on failure.
-8. **Ingestion must be idempotent.** Same file twice → identical DB state, not duplicates.
-9. **Always stage to S3 before parsing.** If S3 upload fails, abort the job.
-10. **Never expose ingestion endpoints without authentication.** All routes require admin JWT.
-
-### Feature 2 Hard Rules
-
-11. **Always use `GEOGRAPHY` type, never `GEOMETRY`.** All spatial columns use `GEOGRAPHY(type, 4326)`.
-12. **Never write raw SQL outside `dal.py`.** All queries go through the Data Access Layer.
-13. **Never connect directly to PostgreSQL port 5432 from the application.** Always through PgBouncer (port 5433). Only Alembic migrations use `DATABASE_URL_DIRECT`.
-14. **The NL Query Engine must always use `get_readonly_db()`.** Never `get_db()`.
-15. **Never cache query results larger than `REDIS_CACHE_MAX_ROWS`.** Large results skip the cache.
-16. **Always use `pool_pre_ping=True` on SQLAlchemy engines.** Stale connections must never cause failures.
-17. **Materialized views must be queried directly — never recomputed inline.** Use `refresh_materialized_views()` after ingestion.
-
-### Feature 3 Hard Rules
-
-18. **`embeddings.py` is the only file that calls the OpenAI embedding API.** No other module creates embeddings.
-19. **Never embed texts one at a time in a loop.** Always batch via `embed_texts()` (Hard Rule #2 for embeddings).
-20. **Embedding failures must never crash the pipeline.** Set `status='embedding_failed'` and continue.
-21. **Always use the `<=>` cosine distance operator for vector search.** Never `<->` (L2) or `<#>` (inner product).
-22. **Never return search results below `SEARCH_SIMILARITY_THRESHOLD`.** Empty list is a valid response.
-23. **Never use HNSW with `op.create_index()`.** HNSW indexes require raw SQL via `op.execute()`.
-24. **`resolve_region_name()` is the sole entry point for region name resolution.** No other function may query `ocean_regions` by name directly.
-25. **Never expose the reindex endpoint without admin authentication.** All write endpoints require admin JWT.
-26. **Never log embedding vectors.** Only log metadata (text count, tokens, time).
-
-### Feature 4 Hard Rules
-
-27. **Never execute SQL before validation passes.** All 3 checks (syntax, read-only, whitelist) must pass.
-28. **Always use `get_readonly_db()` for query execution.** Never `get_db()`.
-29. **Schema prompt is a module-level constant.** Never built dynamically per request.
-30. **Read-only enforcement via AST walk, not string matching.** `sqlglot` expression tree, not regex.
-31. **Never block on interpretation failure.** Return template fallback.
-32. **Never block on Redis unavailability.** Query engine continues without context.
-33. **All LLM calls live in `pipeline.py` only.** No other module calls the LLM API.
-34. **Original SQL is never modified after validation.** LIMIT is applied via subquery wrapper.
-35. **Longitude before latitude in `ST_MakePoint`.** `ST_MakePoint(lon, lat)`, never `(lat, lon)`.
-36. **After 3 failed validations, return error — never execute.** Hard stop, no exceptions.
-
----
-
-## Release Plan
-
-| Phase | Scope | Status |
-|-------|-------|--------|
-| Phase 1 | Data ingestion & database | ✅ Complete |
-| Phase 2 | Ocean data database & query infrastructure | ✅ Complete |
-| Phase 3 | Metadata search engine | ✅ Complete |
-| Phase 4 | AI query layer | ✅ Complete |
-| Phase 5 | Chat interface (backend + frontend) | ✅ Complete |
-| Phase 6 | Public prototype + chart experience | ✅ Complete |
-| Phase 7 | Geospatial map exploration | ✅ Complete |
-| Phase 13 | Authentication & account management | ✅ Complete |
-
----
-
-## Feature 7: Geospatial Map Exploration
-
-Feature 7 adds an interactive map workflow so users can discover floats spatially, inspect float details, and deep-link directly into chat queries.
-
-### Backend API (`/api/v1/map`)
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /active-floats` | Latest location for all active floats (Redis cached) |
-| `GET /nearest-floats` | N nearest floats to a lat/lon point |
-| `POST /radius-query` | Profile metadata inside a user-selected radius |
-| `GET /floats/{platform_number}` | Float metadata + recent profile pressure/temperature |
-| `GET /basin-floats` | Latest floats within a resolved basin polygon |
-| `GET /basin-polygons` | Basin polygons as GeoJSON FeatureCollection (Redis cached) |
-
-### Frontend Experience (`/map`)
-
-- Clustered active-float markers with float-type filtering.
-- Circle drawing for nearest/radius queries.
-- Basin filtering with all 15 configured basin/sub-region names.
-- Search resolution order: decimal coords → DMS → basin name → geography lookup.
-- Float detail panel with mini profile chart and chat deep-link actions.
-- Map route hides session sidebar/header for full-screen exploration.
-
-### Deep-Link to Chat
-
-`/chat/[session_id]?prefill=...` now auto-submits exactly once per session/value pair, enabling one-click map-to-chat workflows.
-
-### Feature 7 Validation
-
-- Backend map endpoint tests: `tests/test_map_api.py`.
-- Frontend tests added for map search parsing, basin rendering, and prefill auto-submit behavior.
-- Frontend build + type checks pass.
-
----
-
-## Current Status (March 3, 2026)
-
-- Features 1 through 7 are implemented.
-- Map API, map route, chat deep-link integration, and test coverage for new behavior are in place.
-
----
-
-## Frontend Application
-
-The frontend is a Next.js 14 app located in `frontend/` and serves as the main user interface for chat, dashboard visualizations, and geospatial exploration.
-
-### Frontend Tech Stack
-
-| Package | Purpose |
-|---|---|
-| Next.js 14 + React 18 | App Router UI framework |
-| TypeScript 5 | Static typing |
-| Tailwind CSS | Styling and design tokens |
-| Zustand | Client-side state management |
-| react-markdown + remark-gfm | Markdown rendering |
-| Vitest + RTL | Component/unit testing |
-| Leaflet ecosystem | Map rendering for Feature 7 |
-
-### Frontend Quick Start
+### 8. Start the frontend
 
 ```bash
 cd frontend
@@ -1308,54 +104,691 @@ cp .env.local.example .env.local
 npm run dev
 ```
 
-Default frontend URL: `http://localhost:3000`  
-Expected backend URL: `http://localhost:8000`
-
-### Frontend Environment Variable
-
-| Variable | Default | Description |
-|---|---|---|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend API base URL |
-
-### Frontend Scripts
-
-| Command | Description |
-|---|---|
-| `npm run dev` | Start development server |
-| `npm run build` | Production build |
-| `npm run start` | Run production server |
-| `npm run lint` | Next.js lint |
-| `npm test` | Run Vitest suite |
-
-### Frontend Architecture
-
-```
-frontend/
-├── app/                  # Next.js routes (/chat, /dashboard, /map)
-├── components/           # UI components (chat, layout, map, visualization)
-├── lib/                  # Typed API clients, SSE helpers, map queries
-├── store/                # Zustand stores
-├── types/                # Shared TS interfaces and declaration shims
-└── tests/                # Vitest test suites
-```
-
-### Frontend Interaction Flows
-
-- Chat flow uses SSE events: `thinking` → `interpreting` → `executing` → `results` → `suggestions` → `done`.
-- Feature 7 map flow supports nearest-float lookup, radius queries, basin filtering, and deep-links into chat via `prefill`.
-- Chat deep-links auto-submit once per session/value pair for map-to-chat workflows.
-
-### Frontend Tests (Current)
-
-- Existing chat/component tests remain active under `frontend/tests/`.
-- Feature 7 additions include:
-  - `SearchBar.test.tsx`
-  - `BasinFilterPanel.test.tsx`
-  - `ChatSessionPrefill.test.tsx`
+Frontend: `http://localhost:3000` · Backend API: `http://localhost:8000` · API docs: `http://localhost:8000/docs`
 
 ---
 
-## Static Data Files
+## Architecture
 
-- `floatchai ai/floatchat/backend/data/` stores static data files used by backend features.
-- `geography_lookup.json` is used by Feature 4 (NL Query Engine) via `GEOGRAPHY_FILE_PATH`.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        USER LAYER                               │
+│   Chat Interface  │  Visualization  │  Geospatial Map  │  Auth  │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+┌─────────────────────────────────────────────────────────────────┐
+│                     INTELLIGENCE LAYER                          │
+│   NL Query Engine  │  Metadata Search  │  Follow-up Generator   │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+┌─────────────────────────────────────────────────────────────────┐
+│                      API LAYER (FastAPI)                        │
+│   /auth  │  /query  │  /chat  │  /map  │  /search  │  /export   │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+┌─────────────────────────────────────────────────────────────────┐
+│                        DATA LAYER                               │
+│   PostgreSQL + PostGIS  │  pgvector  │  Redis  │  MinIO         │
+└─────────────────────────────────────────────────────────────────┘
+                                │
+┌─────────────────────────────────────────────────────────────────┐
+│                    INGESTION PIPELINE                           │
+│   NetCDF Parser (xarray)  │  QC Filter  │  Celery + Redis       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Request flow for a chat query:**
+
+```
+User question
+    → Geography resolution (place name → bounding box)
+    → Conversation context (Redis, last 10 turns)
+    → NL-to-SQL pipeline (LLM → SQL → validate → retry up to 3×)
+    → Row estimation (EXPLAIN JSON) → confirmation if >50K rows
+    → SQL execution (read-only connection)
+    → Result interpretation (separate LLM call)
+    → SSE stream to frontend: thinking → interpreting → executing → results → suggestions → done
+```
+
+---
+
+## Features
+
+### Feature 1 — Data Ingestion Pipeline ✅
+
+Accepts ARGO NetCDF files (`.nc`, `.nc4`) or ZIP archives. Validates structure, parses all oceanographic variables, cleans and normalises data, writes to PostgreSQL with idempotent upserts, and generates LLM dataset summaries — entirely asynchronous via Celery.
+
+**Upload endpoint:** `POST /api/v1/datasets/upload` — returns `job_id` within 2 seconds.
+
+**Variables ingested:** `PRES`, `TEMP`, `PSAL`, `DOXY`, `CHLA`, `NITRATE`, `PH_IN_SITU_TOTAL`, `BBP700`, `DOWNWELLING_IRRADIANCE` plus all `_QC` flags.
+
+**Performance targets:** ≥500 profiles/minute per worker · end-to-end latency <5 minutes for a 100 MB file.
+
+---
+
+### Feature 2 — Ocean Data Database ✅
+
+High-performance spatial database optimised for oceanographic queries: time-range filtering, spatial proximity, depth slicing, and multi-variable profile retrieval.
+
+**Key components:**
+
+| Component | Purpose |
+|---|---|
+| PgBouncer (port 5433) | Connection pooler — all application queries route here |
+| GiST index on `profiles.geom` | Fast `ST_DWithin` / `ST_Within` spatial queries |
+| BRIN index on `profiles.timestamp` | Efficient time-range scans |
+| `ocean_regions` table | 15 named basin polygons (Natural Earth 1:10m) |
+| `mv_float_latest_position` | Latest position per float, refreshed after ingestion |
+| `mv_dataset_stats` | Per-dataset aggregates |
+| `floatchat_readonly` DB user | Read-only connection for the NL query engine |
+| Data Access Layer (`dal.py`) | 10 query functions — only file that writes raw SQL |
+
+---
+
+### Feature 3 — Metadata Search Engine ✅
+
+Semantic search over datasets and floats using OpenAI `text-embedding-3-small` (1536 dimensions) stored in pgvector with HNSW indexes. Fuzzy region name matching via `pg_trgm`.
+
+**Endpoints at `/api/v1/search/`:**
+
+| Endpoint | Description |
+|---|---|
+| `GET /datasets` | Semantic search with hybrid scoring (cosine + recency + region boost) |
+| `GET /floats` | Semantic float discovery |
+| `GET /floats/by-region` | Floats in a named region (spatial containment) |
+| `GET /datasets/{id}/summary` | Rich dataset summary with bbox GeoJSON |
+| `GET /datasets/summaries` | Lightweight cards for all active datasets |
+| `POST /reindex/{dataset_id}` | Re-embed a dataset (admin only) |
+
+---
+
+### Feature 4 — Natural Language Query Engine ✅
+
+Converts plain English questions into validated, read-only PostgreSQL queries. Supports four LLM providers via an OpenAI-compatible API.
+
+**Supported providers:**
+
+| Provider | Default Model | Key Setting |
+|---|---|---|
+| DeepSeek (default) | `deepseek-reasoner` | `DEEPSEEK_API_KEY` |
+| Qwen | `qwq-32b` | `QWEN_API_KEY` |
+| Gemma | `gemma3` | `GEMMA_API_KEY` |
+| OpenAI | `gpt-4o` | `OPENAI_API_KEY` |
+
+**SQL validation pipeline:** Every generated query passes three mandatory checks before execution — syntax (sqlglot AST), read-only enforcement (AST walk for write nodes), and table whitelist. If validation fails, the error is injected back into the prompt and retried up to 3 times. After 3 failures the query is never executed.
+
+**Geography resolution:** 50 ocean region names resolved to bounding boxes via `data/geography_lookup.json` before prompt construction.
+
+---
+
+### Feature 5 — Conversational Chat Interface ✅
+
+SSE-streamed chat with session memory, follow-up suggestions, and inline result display.
+
+**SSE event sequence:** `thinking → interpreting → executing → results → suggestions → done`
+
+**Chat endpoints at `/api/v1/chat/`:**
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/sessions` | Create a new session |
+| GET | `/sessions` | List user's sessions |
+| GET | `/sessions/{id}` | Session details |
+| PATCH | `/sessions/{id}` | Rename session |
+| DELETE | `/sessions/{id}` | Soft delete |
+| GET | `/sessions/{id}/messages` | Paginated message history |
+| POST | `/sessions/{id}/query` | SSE query stream |
+| POST | `/sessions/{id}/query/confirm` | Confirm large query (>50K rows) |
+| GET | `/suggestions` | Load-time example queries (Redis cached) |
+
+---
+
+### Feature 6 — Data Visualization Dashboard ✅
+
+Interactive oceanographic charts rendered inline in the chat and in a standalone dashboard view at `/dashboard`.
+
+**Chart types:**
+
+| Component | Description |
+|---|---|
+| `OceanProfileChart` | Vertical profile with inverted Y-axis (deeper = lower) |
+| `TSdiagram` | Temperature-Salinity scatter, colored by pressure |
+| `SalinityOverlayChart` | Dual X-axes (temperature + salinity) with T-S toggle |
+| `TimeSeriesChart` | Variable over time, one trace per float |
+| `FloatPositionMap` | Clustered float positions with cmocean colorscales |
+| `FloatTrajectoryMap` | Float path with blue→red temporal gradient |
+| `RegionSelector` | Draw polygon/rectangle → emits GeoJSON for query filtering |
+
+`VisualizationPanel` automatically selects the correct chart type using `detectResultShape()` based on the query result columns. All maps use Leaflet.js with OpenStreetMap tiles.
+
+---
+
+### Feature 7 — Geospatial Map Exploration ✅
+
+Full-screen interactive map at `/map` for discovering floats spatially before querying.
+
+**Map endpoints at `/api/v1/map/`:**
+
+| Endpoint | Description |
+|---|---|
+| `GET /active-floats` | All float latest positions (Redis cached, 5 min TTL) |
+| `GET /nearest-floats` | N nearest floats to a clicked point |
+| `POST /radius-query` | Profile metadata within a drawn circle (50–2000 km) |
+| `GET /floats/{platform_number}` | Float metadata + last 5 profiles |
+| `GET /basin-floats` | Floats within a named ocean basin |
+| `GET /basin-polygons` | All 15 basin geometries as GeoJSON (Redis cached, 1 hr TTL) |
+
+**Deep link:** `/chat/[session_id]?prefill=...` auto-submits a query once, enabling one-click map-to-chat workflows.
+
+---
+
+### Feature 8 — Data Export System ✅
+
+One-click export of any chat query result. Small exports stream directly; large exports queue as a Celery task and deliver a presigned MinIO URL.
+
+**Export endpoint:** `POST /api/v1/export`
+
+| Format | Library | Description |
+|---|---|---|
+| CSV | pandas | Flat table, one row per measurement, UTF-8, `#` comment header with query metadata |
+| NetCDF | xarray | ARGO-compliant NetCDF4 Classic with correct variable names (`TEMP`, `PSAL`, `PRES`, `DOXY`), units, and fill values |
+| JSON | stdlib json | Structured envelope with `metadata` and `profiles` array |
+
+**Routing:** Exports estimated under 50 MB stream synchronously. Exports above 50 MB are queued — poll `GET /api/v1/export/status/{task_id}` every 3 seconds. Hard cap at 500 MB (HTTP 413).
+
+**Status poll response:**
+```json
+{
+  "status": "complete",
+  "download_url": "https://minio.../floatchat-exports/...",
+  "expires_at": "2026-03-06T11:00:00Z"
+}
+```
+
+---
+
+### Feature 13 — Authentication & User Management ✅
+
+JWT-based authentication with role-based access control.
+
+**Token model:** Short-lived access token (15 min, in-memory on frontend) + httpOnly refresh cookie (`floatchat_refresh`, 7 days).
+
+**Auth endpoints at `/api/v1/auth/`:**
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/signup` | Create account, returns access token |
+| POST | `/login` | Authenticate, returns access token + sets cookie |
+| POST | `/logout` | Clears refresh cookie |
+| GET | `/me` | Current user profile |
+| POST | `/refresh` | Silent token refresh using cookie |
+| POST | `/forgot-password` | Send reset link (always HTTP 200) |
+| POST | `/reset-password` | Set new password with token |
+
+**Route protection:**
+
+| Access level | Endpoints |
+|---|---|
+| Public | `/health`, `GET /api/v1/search/*`, all `/api/v1/auth/*` |
+| Authenticated user | `/api/v1/query/*`, `/api/v1/chat/*`, `/api/v1/map/*`, `/api/v1/export/*` |
+| Admin only | `/api/v1/datasets/*`, `POST /api/v1/search/reindex/{id}` |
+
+---
+
+## API Reference
+
+Full interactive documentation at `http://localhost:8000/docs` (requires `DEBUG=True`).
+
+### Authentication
+
+All protected endpoints require:
+```
+Authorization: Bearer <access_token>
+```
+
+Access tokens expire after 15 minutes. The frontend silently refreshes them using the `floatchat_refresh` httpOnly cookie.
+
+### Key Request/Response Examples
+
+**Run a natural language query:**
+```http
+POST /api/v1/query
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "query": "How many BGC floats are in the Arabian Sea?",
+  "session_id": "optional-uuid",
+  "provider": "deepseek"
+}
+```
+
+```json
+{
+  "session_id": "a1b2c3...",
+  "sql": "SELECT COUNT(*) FROM floats WHERE ...",
+  "columns": ["count"],
+  "rows": [{"count": 42}],
+  "row_count": 1,
+  "interpretation": "There are 42 BGC floats in the Arabian Sea.",
+  "provider": "deepseek",
+  "model": "deepseek-reasoner"
+}
+```
+
+**Upload a dataset:**
+```http
+POST /api/v1/datasets/upload
+Authorization: Bearer <admin_token>
+Content-Type: multipart/form-data
+
+file=<floats.nc>
+dataset_name=ARGO Indian Ocean 2025
+```
+
+```json
+{
+  "job_id": "550e8400-...",
+  "dataset_id": 1,
+  "status": "pending",
+  "message": "File received. Ingestion started."
+}
+```
+
+**Export a query result:**
+```http
+POST /api/v1/export
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "message_id": "uuid-of-chat-message",
+  "format": "csv",
+  "rows": [{"profile_id": 1, "temperature": 28.5, ...}]
+}
+```
+
+---
+
+## Database Schema
+
+Created by Alembic migrations `001` through `005`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
+
+### Core Tables
+
+**`floats`** — One row per ARGO float.
+```
+float_id (SERIAL PK) · platform_number (UNIQUE) · wmo_id · float_type
+deployment_date · deployment_lat · deployment_lon · country · program
+```
+
+**`profiles`** — One row per float cycle. Unique on `(platform_number, cycle_number)`.
+```
+profile_id (BIGSERIAL PK) · float_id (FK) · platform_number · cycle_number
+timestamp · latitude · longitude · geom (GEOGRAPHY POINT) · data_mode · dataset_id (FK)
+```
+Indexes: GiST on `geom` · BRIN on `timestamp` · B-tree on `float_id`
+
+**`measurements`** — One row per depth level within a profile.
+```
+measurement_id (BIGSERIAL PK) · profile_id (FK CASCADE) · pressure · temperature · salinity
+dissolved_oxygen · chlorophyll · nitrate · ph · bbp700 · downwelling_irradiance
+pres_qc · temp_qc · psal_qc · doxy_qc · chla_qc · nitrate_qc · ph_qc · is_outlier
+```
+
+**`datasets`** — One row per ingested file.
+```
+dataset_id (SERIAL PK) · name · source_filename · raw_file_path · date_range_start · date_range_end
+bbox (GEOGRAPHY POLYGON) · float_count · profile_count · variable_list (JSONB)
+summary_text · is_active · dataset_version
+```
+
+**`float_positions`** — Lightweight spatial index. One row per `(platform_number, cycle_number)`.
+```
+position_id (SERIAL PK) · platform_number · cycle_number · timestamp
+latitude · longitude · geom (GEOGRAPHY POINT, GiST indexed)
+```
+
+**`ingestion_jobs`** — Tracks pipeline execution.
+```
+job_id (UUID PK) · dataset_id (FK) · original_filename · raw_file_path
+status · progress_pct · profiles_total · profiles_ingested · error_log · errors (JSONB)
+```
+
+**`ocean_regions`** — 15 named basin polygons.
+```
+region_id (SERIAL PK) · name (UNIQUE) · geom (GEOGRAPHY MULTIPOLYGON, GiST indexed)
+```
+
+### Search Tables
+
+**`dataset_embeddings`** — One row per dataset, HNSW indexed.
+```
+embedding_id (SERIAL PK) · dataset_id (FK UNIQUE) · embedding_text · embedding (vector 1536) · status
+```
+
+**`float_embeddings`** — One row per float, HNSW indexed.
+```
+embedding_id (SERIAL PK) · float_id (FK UNIQUE) · embedding_text · embedding (vector 1536) · status
+```
+
+### Chat Tables
+
+**`chat_sessions`**
+```
+session_id (UUID PK) · user_identifier · name · created_at · last_active_at · is_active · message_count
+```
+
+**`chat_messages`**
+```
+message_id (UUID PK) · session_id (FK) · role · content · nl_query · generated_sql
+result_metadata (JSONB) · follow_up_suggestions (JSONB) · error (JSONB) · status · created_at
+```
+
+### Auth Tables
+
+**`users`**
+```
+user_id (UUID PK) · email (UNIQUE) · hashed_password · name · role · created_at · is_active
+```
+
+**`password_reset_tokens`**
+```
+token_id (UUID PK) · user_id (FK CASCADE) · token_hash · expires_at · used
+```
+
+### Materialized Views
+
+| View | Description | Refreshed |
+|---|---|---|
+| `mv_float_latest_position` | Latest position per float | After each ingestion run |
+| `mv_dataset_stats` | Per-dataset aggregates | After each ingestion run |
+
+---
+
+## Environment Variables
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL via PgBouncer — `postgresql+psycopg2://...@localhost:5433/floatchat` |
+| `READONLY_DATABASE_URL` | Read-only user via PgBouncer for query execution |
+| `REDIS_URL` | Redis connection — `redis://localhost:6379/0` |
+| `JWT_SECRET_KEY` | JWT signing key, minimum 32 characters |
+
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL_DIRECT` | — | Direct PostgreSQL (port 5432) — Alembic migrations only |
+| `READONLY_DB_PASSWORD` | `floatchat_readonly` | Read-only user password |
+| `DB_POOL_SIZE` | `10` | SQLAlchemy pool size |
+| `DB_MAX_OVERFLOW` | `20` | Max overflow connections |
+
+### Celery & Redis
+
+| Variable | Default | Description |
+|---|---|---|
+| `CELERY_BROKER_URL` | `redis://localhost:6379/0` | Celery broker |
+| `CELERY_RESULT_BACKEND` | `redis://localhost:6379/1` | Celery result store |
+| `REDIS_CACHE_TTL_SECONDS` | `300` | Query result cache TTL |
+| `REDIS_CACHE_MAX_ROWS` | `10000` | Max rows to cache |
+
+### Object Storage (MinIO / S3)
+
+| Variable | Default | Description |
+|---|---|---|
+| `S3_ENDPOINT_URL` | — | Set for local MinIO: `http://localhost:9000` |
+| `S3_ACCESS_KEY` | `minioadmin` | Access key |
+| `S3_SECRET_KEY` | `minioadmin` | Secret key |
+| `S3_BUCKET_NAME` | `floatchat-raw-uploads` | Upload staging bucket |
+| `S3_REGION` | `us-east-1` | Region |
+
+### LLM Providers
+
+| Variable | Default | Description |
+|---|---|---|
+| `QUERY_LLM_PROVIDER` | `deepseek` | Default NL query provider |
+| `QUERY_LLM_TEMPERATURE` | `0.0` | LLM temperature |
+| `QUERY_MAX_RETRIES` | `3` | Max SQL validation retries |
+| `QUERY_MAX_ROWS` | `1000` | Max rows returned per query |
+| `QUERY_CONFIRMATION_THRESHOLD` | `50000` | Row estimate that triggers confirmation |
+| `DEEPSEEK_API_KEY` | — | DeepSeek API key |
+| `QWEN_API_KEY` | — | Qwen API key |
+| `GEMMA_API_KEY` | — | Gemma API key |
+| `OPENAI_API_KEY` | — | OpenAI API key (also used for embeddings and LLM summaries) |
+
+### Authentication
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime |
+| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | `60` | Reset token lifetime |
+| `FRONTEND_URL` | `http://localhost:3000` | Used to build password reset links |
+
+### Export
+
+| Variable | Default | Description |
+|---|---|---|
+| `EXPORT_SYNC_SIZE_LIMIT_MB` | `50` | Exports above this size use async Celery path |
+| `EXPORT_PRESIGNED_URL_EXPIRY_SECONDS` | `3600` | Presigned URL expiry (1 hour) |
+| `EXPORT_TASK_STATUS_TTL_SECONDS` | `7200` | Redis task status key TTL (2 hours) |
+| `EXPORT_BUCKET_NAME` | `floatchat-exports` | MinIO bucket for async exports |
+| `EXPORT_MAX_SIZE_MB` | `500` | Hard cap — returns HTTP 413 above this |
+
+### Search & Embeddings
+
+| Variable | Default | Description |
+|---|---|---|
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `EMBEDDING_DIMENSIONS` | `1536` | Vector dimensions |
+| `SEARCH_SIMILARITY_THRESHOLD` | `0.3` | Min cosine similarity to include in results |
+| `FUZZY_MATCH_THRESHOLD` | `0.4` | pg_trgm threshold for region name matching |
+
+### Observability
+
+| Variable | Default | Description |
+|---|---|---|
+| `SENTRY_DSN` | — | Sentry error tracking DSN |
+| `LOG_LEVEL` | `INFO` | structlog log level |
+| `DEBUG` | `False` | Enables `/docs` Swagger UI |
+
+---
+
+## Running Tests
+
+### Backend
+
+```bash
+cd backend
+
+# All tests
+pytest tests/ -v
+
+# By feature
+pytest tests/test_parser.py tests/test_cleaner.py tests/test_writer.py tests/test_api.py -v      # Feature 1
+pytest tests/test_schema.py tests/test_dal.py tests/test_cache.py -v                              # Feature 2 (Docker required)
+pytest tests/test_embeddings.py tests/test_search.py tests/test_discovery.py -v                   # Feature 3
+pytest tests/test_validator.py tests/test_executor.py tests/test_geography.py tests/test_pipeline_f4.py -v  # Feature 4
+pytest tests/test_chat_api.py tests/test_suggestions.py -v                                        # Feature 5
+pytest tests/test_map_api.py -v                                                                    # Feature 7
+pytest tests/test_export_api.py -v                                                                 # Feature 8
+pytest tests/test_auth_api.py -v                                                                   # Feature 13
+```
+
+**Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
+
+**Total test count:** 309+ tests across all features. No API keys or Docker required for Features 1, 3, 4 (all mocked).
+
+### Frontend
+
+```bash
+cd frontend
+
+npx vitest run          # All tests
+npx tsc --noEmit        # Type checking
+npm run build           # Production build verification
+```
+
+---
+
+## Project Structure
+
+```
+floatchat/
+├── backend/
+│   ├── alembic/
+│   │   └── versions/
+│   │       ├── 001_initial_schema.py       # floats, profiles, measurements, datasets
+│   │       ├── 002_ocean_database.py       # ocean_regions, materialized views, indexes
+│   │       ├── 003_metadata_search.py      # pgvector, embedding tables, HNSW indexes
+│   │       ├── 004_chat_interface.py       # chat_sessions, chat_messages
+│   │       └── 005_auth.py                 # users, password_reset_tokens
+│   ├── app/
+│   │   ├── main.py                         # FastAPI app entry point
+│   │   ├── config.py                       # All environment settings (pydantic-settings)
+│   │   ├── celery_app.py                   # Celery configuration and task registry
+│   │   ├── api/v1/
+│   │   │   ├── ingestion.py                # Dataset upload and job management
+│   │   │   ├── search.py                   # Semantic search endpoints
+│   │   │   ├── query.py                    # NL query and benchmark endpoints
+│   │   │   ├── chat.py                     # Chat session and SSE stream endpoints
+│   │   │   ├── map.py                      # Geospatial exploration endpoints
+│   │   │   ├── export.py                   # Export trigger and status endpoints
+│   │   │   └── auth.py                     # Authentication endpoints
+│   │   ├── auth/
+│   │   │   ├── jwt.py                      # Token generation and validation
+│   │   │   ├── passwords.py                # bcrypt hashing
+│   │   │   ├── dependencies.py             # get_current_user, get_current_admin_user
+│   │   │   └── email.py                    # Password reset email (stdout in dev)
+│   │   ├── db/
+│   │   │   ├── models.py                   # SQLAlchemy ORM models
+│   │   │   ├── session.py                  # DB engines, get_db(), get_readonly_db()
+│   │   │   └── dal.py                      # Data Access Layer — only file with raw SQL
+│   │   ├── ingestion/
+│   │   │   ├── parser.py                   # NetCDF → structured dicts
+│   │   │   ├── cleaner.py                  # Outlier flagging and normalisation
+│   │   │   ├── writer.py                   # Idempotent DB upserts
+│   │   │   ├── metadata.py                 # Dataset stats and LLM summary
+│   │   │   └── tasks.py                    # Celery ingestion tasks
+│   │   ├── query/
+│   │   │   ├── schema_prompt.py            # SCHEMA_PROMPT constant + ALLOWED_TABLES
+│   │   │   ├── geography.py                # Place name → bounding box resolution
+│   │   │   ├── context.py                  # Redis conversation history
+│   │   │   ├── validator.py                # SQL validation (syntax, read-only, whitelist)
+│   │   │   ├── executor.py                 # Safe SQL execution + row estimation
+│   │   │   └── pipeline.py                 # LLM orchestration — all LLM calls live here
+│   │   ├── search/
+│   │   │   ├── embeddings.py               # OpenAI embedding API — only caller
+│   │   │   ├── indexer.py                  # DB record → embedding → pgvector upsert
+│   │   │   ├── search.py                   # Cosine similarity search with hybrid scoring
+│   │   │   ├── discovery.py                # Fuzzy region matching, float discovery
+│   │   │   └── tasks.py                    # Celery indexing task
+│   │   ├── export/
+│   │   │   ├── csv_export.py               # CSV generation (pandas)
+│   │   │   ├── netcdf_export.py            # NetCDF generation (xarray, ARGO-compliant)
+│   │   │   ├── json_export.py              # JSON generation (stdlib)
+│   │   │   ├── size_estimator.py           # Sync vs async routing decision
+│   │   │   └── tasks.py                    # Celery async export task
+│   │   ├── storage/
+│   │   │   └── s3.py                       # MinIO/S3 upload, download, presign
+│   │   └── cache/
+│   │       └── redis_cache.py              # Query result cache
+│   ├── data/
+│   │   └── geography_lookup.json           # 50 ocean region bounding boxes
+│   ├── scripts/
+│   │   ├── seed_ocean_regions.py
+│   │   └── create_readonly_user.sql
+│   ├── tests/
+│   ├── celery_worker.py
+│   ├── requirements.txt
+│   └── alembic.ini
+└── frontend/
+    ├── app/                                # Next.js App Router pages
+    │   ├── chat/[session_id]/              # Main chat interface
+    │   ├── dashboard/                      # Visualization dashboard
+    │   ├── map/                            # Geospatial exploration
+    │   ├── login/ signup/                  # Auth pages
+    │   └── forgot-password/ reset-password/
+    ├── components/
+    │   ├── chat/                           # ChatMessage, ChatInput, ResultTable, ExportButton
+    │   ├── visualization/                  # Chart and map components
+    │   ├── map/                            # Geospatial map components
+    │   ├── auth/                           # AuthCard, PasswordInput, PasswordStrength
+    │   └── layout/                         # SessionSidebar, LayoutShell
+    ├── lib/
+    │   ├── api.ts                          # Auth-aware API client
+    │   ├── mapQueries.ts                   # Map endpoint client
+    │   ├── exportQueries.ts                # Export endpoint client
+    │   ├── colorscales.ts                  # cmocean color arrays for Plotly
+    │   └── detectResultShape.ts            # Chart type auto-selection
+    ├── store/
+    │   ├── chatStore.ts                    # Chat and result row state
+    │   └── authStore.ts                    # Auth state (in-memory tokens only)
+    ├── types/
+    └── tests/
+```
+
+---
+
+## Tech Stack
+
+### Backend
+
+| Purpose | Library |
+|---|---|
+| Web framework | FastAPI |
+| ORM | SQLAlchemy 2.x |
+| Migrations | Alembic |
+| Connection pooler | PgBouncer |
+| PostGIS ORM | GeoAlchemy2 |
+| Vector store | pgvector |
+| Task queue | Celery + Redis |
+| NetCDF parsing | xarray + netCDF4 |
+| Object storage | boto3 (MinIO / S3) |
+| SQL validation | sqlglot |
+| Auth | python-jose + passlib/bcrypt |
+| Config | pydantic-settings |
+| Logging | structlog |
+| Error tracking | Sentry |
+| Testing | pytest + httpx |
+
+### Frontend
+
+| Purpose | Library |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| State | Zustand |
+| Charts | Plotly.js + react-plotly.js |
+| Maps | Leaflet.js + react-leaflet |
+| Map clustering | react-leaflet-cluster |
+| Map drawing | leaflet-draw |
+| Geospatial | @turf/turf |
+| Dashboard grid | react-grid-layout |
+| UI components | Tailwind CSS + shadcn/ui |
+| Markdown | react-markdown + remark-gfm |
+| Autocomplete | Fuse.js |
+| Testing | Vitest + React Testing Library |
+
+### Infrastructure
+
+| Purpose | Technology |
+|---|---|
+| Database | PostgreSQL 15 + PostGIS 3 + pgvector + pg_trgm |
+| Cache / Broker | Redis 7 |
+| Object storage | MinIO (dev) / AWS S3 (prod) |
+| Containerisation | Docker + Docker Compose |
+
+---
+
+## Changelog
+
+| Version | Features |
+|---|---|
+| v1.0 | Features 1–5: Ingestion, database, search, NL query, chat |
+| v1.1 | Feature 6: Visualization dashboard |
+| v1.2 | Feature 7: Geospatial map exploration |
+| v1.3 | Feature 8: Data export (CSV, NetCDF, JSON) |
+| v1.4 | Feature 13: Authentication and user management |

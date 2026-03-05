@@ -102,8 +102,11 @@ services:
       /bin/sh -c "
       mc alias set myminio http://minio:9000 minioadmin minioadmin;
       mc mb myminio/floatchat-raw-uploads --ignore-existing;
+      mc mb myminio/floatchat-exports --ignore-existing;
       mc anonymous set none myminio/floatchat-raw-uploads;
-      echo 'Bucket floatchat-raw-uploads created successfully';
+      mc anonymous set none myminio/floatchat-exports;
+      mc ilm rule add myminio/floatchat-exports --expire-days 1 || true;
+      echo 'Buckets floatchat-raw-uploads and floatchat-exports configured successfully';
       exit 0;
       "
 

@@ -16,3 +16,4 @@ from app.celery_app import celery  # noqa: F401
 
 # Import tasks so Celery can discover them
 import app.ingestion.tasks  # noqa: F401
+import app.export.tasks  # noqa: F401

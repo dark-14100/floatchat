@@ -28,6 +28,7 @@ import type { ChatMessage as ChatMessageType, StreamState } from "@/types/chat";
 import ResultTable from "./ResultTable";
 import SuggestedFollowUps from "./SuggestedFollowUps";
 import LoadingMessage from "./LoadingMessage";
+import ExportButton from "./ExportButton";
 
 const VisualizationPanel = dynamic(
   () => import("../visualization/VisualizationPanel"),
@@ -238,12 +239,20 @@ function SuccessMessage({
 
           {/* Result table — parse rows from content if result_metadata exists */}
           {hasResults && message.result_metadata && (
-            <ResultTable
-              columns={message.result_metadata.columns}
-              rows={rows}
-              rowCount={message.result_metadata.row_count}
-              truncated={message.result_metadata.truncated}
-            />
+            <>
+              <div className="mb-2 flex justify-end">
+                <ExportButton
+                  messageId={message.message_id}
+                  rowCount={message.result_metadata.row_count}
+                />
+              </div>
+              <ResultTable
+                columns={message.result_metadata.columns}
+                rows={rows}
+                rowCount={message.result_metadata.row_count}
+                truncated={message.result_metadata.truncated}
+              />
+            </>
           )}
 
           {hasVisualizationData && message.result_metadata && (

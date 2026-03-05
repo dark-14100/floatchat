@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1–6 complete, Feature 7 in progress
+> **Status:** In Development — Features 1–6 complete, Feature 7 in progress, Feature 8 complete
 
 ---
 
@@ -38,7 +38,7 @@
 | 6 — Data Visualization Dashboard | ✅ Complete |
 | 7 — Geospatial Exploration | 🔄 In Progress |
 | 13 — Authentication & User Management | ⏳ Next |
-| 8 — Data Export System | ⏳ Planned |
+| 8 — Data Export System | ✅ Complete |
 | 14 — RAG Pipeline | ⏳ Planned |
 | 15 — Anomaly Detection | ⏳ Planned |
 | 9 — Guided Query Assistant | ⏳ Planned |
@@ -619,7 +619,7 @@ Map-first discovery of oceanographic data. Full-screen map at `/map` with neares
 
 ## 8. Data Export System
 
-**Status: ⏳ Planned**
+**Status: ✅ Complete**
 
 ### Overview
 Export query results in CSV, NetCDF, and JSON formats. Async export via Celery for large files.
@@ -654,11 +654,11 @@ Export query results in CSV, NetCDF, and JSON formats. Async export via Celery f
 - Query results: exactly what was returned in chat, one-click export
 
 ### Tasks for Developers
-- [ ] Build export functions: CSV, NetCDF, JSON
-- [ ] Build `POST /api/v1/export` endpoint
-- [ ] Implement async Celery export for large files
-- [ ] Build download progress indicator in chat UI
-- [ ] Add Export button to every query result panel
+- [x] Build export functions: CSV, NetCDF, JSON
+- [x] Build `POST /api/v1/export` endpoint
+- [x] Implement async Celery export for large files
+- [x] Build download progress indicator in chat UI
+- [x] Add Export button to every query result panel
 
 ---
 
