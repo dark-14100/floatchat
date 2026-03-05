@@ -2,7 +2,8 @@
  * FloatChat — API Client
  *
  * Typed async functions for all backend API calls.
- * All functions send the X-User-ID header from localStorage.
+ * Uses bearer access token from in-memory auth store.
+ * On 401, attempts one silent refresh and retries once.
  * All throw typed errors on HTTP failures.
  */
 
@@ -12,6 +13,8 @@ import type {
   CreateSessionResponse,
   Suggestion,
 } from "@/types/chat";
+import type { RefreshResponse } from "@/types/auth";
+import { useAuthStore } from "@/store/authStore";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -19,6 +22,12 @@ const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const API_V1 = `${API_BASE}/api/v1`;
+
+export interface ApiFetchOptions extends RequestInit {
+  includeLegacyUserId?: boolean;
+  retryOnAuthError?: boolean;
+  skipAuthRedirect?: boolean;
+}
 
 // ── Error class ────────────────────────────────────────────────────────────
 
@@ -35,7 +44,7 @@ export class ApiError extends Error {
 
 // ── User ID helper ─────────────────────────────────────────────────────────
 
-function getUserId(): string {
+export function getLegacyUserId(): string {
   if (typeof window === "undefined") return "";
   let uid = localStorage.getItem("floatchat_user_id");
   if (!uid) {
@@ -45,22 +54,101 @@ function getUserId(): string {
   return uid;
 }
 
+function redirectToLogin(): void {
+  if (typeof window === "undefined") return;
+
+  const { pathname, search } = window.location;
+  const isAuthRoute =
+    pathname === "/login" ||
+    pathname === "/signup" ||
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password";
+
+  if (isAuthRoute) {
+    return;
+  }
+
+  const redirectTarget = `${pathname}${search}`;
+  window.location.href = `/login?redirect=${encodeURIComponent(redirectTarget)}`;
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_V1}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as RefreshResponse;
+    useAuthStore.getState().setAuth(payload.user, payload.access_token);
+    return payload.access_token;
+  } catch {
+    return null;
+  }
+}
+
+async function handleUnauthorized(skipAuthRedirect: boolean): Promise<void> {
+  useAuthStore.getState().clearAuth();
+  if (!skipAuthRedirect) {
+    redirectToLogin();
+  }
+}
+
 // ── Base fetch wrapper ─────────────────────────────────────────────────────
 
-async function apiFetch<T>(
+export async function apiFetch<T>(
   path: string,
-  options: RequestInit = {},
+  options: ApiFetchOptions = {},
+  hasRetried = false,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "X-User-ID": getUserId(),
-    ...(options.headers as Record<string, string> | undefined),
-  };
+  const {
+    includeLegacyUserId = false,
+    retryOnAuthError = true,
+    skipAuthRedirect = false,
+    ...requestInit
+  } = options;
+
+  const headers = new Headers(requestInit.headers);
+  const accessToken = useAuthStore.getState().accessToken;
+
+  if (!headers.has("Content-Type") && requestInit.body && !(requestInit.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  if (includeLegacyUserId) {
+    const legacyUserId = getLegacyUserId();
+    if (legacyUserId) {
+      headers.set("X-User-ID", legacyUserId);
+    }
+  }
 
   const res = await fetch(`${API_V1}${path}`, {
-    ...options,
+    ...requestInit,
     headers,
+    credentials: requestInit.credentials ?? "include",
   });
+
+  if (res.status === 401) {
+    if (retryOnAuthError && !hasRetried) {
+      const refreshedToken = await refreshAccessToken();
+      if (refreshedToken) {
+        return apiFetch<T>(path, options, true);
+      }
+    }
+
+    await handleUnauthorized(skipAuthRedirect);
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");

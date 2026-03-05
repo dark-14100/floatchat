@@ -17,6 +17,8 @@ Tables:
     10. float_embeddings - Vector embeddings per float (Feature 3)
     11. chat_sessions - One row per conversation session (Feature 5)
     12. chat_messages - One row per message in a conversation (Feature 5)
+    13. users - One row per authenticated user (Feature 13)
+    14. password_reset_tokens - Password reset flow tokens (Feature 13)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -535,3 +537,68 @@ class ChatMessage(Base):
     session: Mapped["ChatSession"] = relationship(
         "ChatSession", back_populates="messages"
     )
+
+
+# =============================================================================
+# 13. Users (Feature 13)
+# =============================================================================
+class User(Base):
+    """One row per authenticated user account."""
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('researcher', 'admin')", name="ck_users_role"),
+        Index("ix_users_email", "email", unique=True),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(
+        String(20),
+        server_default=sa.text("'researcher'"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa.text("true"), nullable=False
+    )
+
+    # Relationships
+    password_reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
+        "PasswordResetToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+# =============================================================================
+# 14. Password Reset Tokens (Feature 13)
+# =============================================================================
+class PasswordResetToken(Base):
+    """Password reset tokens stored as hashes with expiry and used flag."""
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        Index("ix_password_reset_tokens_token_hash", "token_hash"),
+    )
+
+    token_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used: Mapped[bool] = mapped_column(
+        Boolean, server_default=sa.text("false"), nullable=False
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="password_reset_tokens")

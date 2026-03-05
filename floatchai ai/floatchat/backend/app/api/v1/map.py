@@ -24,6 +24,7 @@ from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.config import get_settings
 from app.db.dal import get_profiles_by_radius
 from app.db.models import Float, Measurement, OceanRegion, Profile, mv_float_latest_position
@@ -32,7 +33,7 @@ from app.search.discovery import resolve_region_name
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/map", tags=["Map"])
+router = APIRouter(prefix="/map", tags=["Map"], dependencies=[Depends(get_current_user)])
 
 
 # ── Request/Response Models ────────────────────────────────────────────────

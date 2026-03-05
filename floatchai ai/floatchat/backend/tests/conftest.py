@@ -14,6 +14,7 @@ Provides:
 pytest_plugins = ["tests.conftest_feature2"]
 
 import os
+import uuid
 from pathlib import Path
 from typing import Generator
 
@@ -22,7 +23,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event, text, JSON
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.models import Base
+from app.db.models import Base, User
 
 # ---------------------------------------------------------------------------
 # SQLite type-compilation workarounds for Postgres-specific column types.
@@ -108,6 +109,44 @@ def db_session(test_engine, create_tables) -> Generator[Session, None, None]:
     session.close()
     transaction.rollback()
     connection.close()
+
+
+@pytest.fixture()
+def auth_user(db_session: Session) -> User:
+    """Create an active researcher user for auth-protected endpoint tests."""
+    user = User(
+        user_id=uuid.uuid4(),
+        email="auth-user@example.com",
+        hashed_password="test-hash",
+        name="Auth User",
+        role="researcher",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
+def auth_token(auth_user: User) -> str:
+    """Generate a valid access JWT tied to auth_user."""
+    from app.auth.jwt import create_token
+
+    return create_token(
+        {
+            "sub": str(auth_user.user_id),
+            "email": auth_user.email,
+            "role": auth_user.role,
+        },
+        token_type="access",
+    )
+
+
+@pytest.fixture()
+def auth_headers(auth_token: str) -> dict[str, str]:
+    """Authorization headers for protected route tests."""
+    return {"Authorization": f"Bearer {auth_token}"}
 
 
 # =============================================================================

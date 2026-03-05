@@ -8,6 +8,7 @@ All settings are validated on application startup.
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,6 +82,11 @@ class Settings(BaseSettings):
     # =========================================================================
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
+    JWT_SECRET_KEY: str
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 60
+    FRONTEND_URL: str = "http://localhost:3000"
     
     # =========================================================================
     # Monitoring
@@ -150,6 +156,13 @@ class Settings(BaseSettings):
     # =========================================================================
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
+
+    @field_validator("JWT_SECRET_KEY")
+    @classmethod
+    def validate_jwt_secret_key(cls, value: str) -> str:
+        if not value or len(value.strip()) < 32:
+            raise ValueError("JWT_SECRET_KEY must be set and be at least 32 characters long")
+        return value
 
 
 @lru_cache

@@ -13,8 +13,12 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.config import settings
+from app.rate_limiter import limiter
 
 
 # =============================================================================
@@ -140,6 +144,14 @@ app = FastAPI(
 
 
 # =============================================================================
+# SlowAPI Rate Limiting Middleware (Feature 13)
+# =============================================================================
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+
+# =============================================================================
 # CORS Middleware (Feature 5)
 # =============================================================================
 _cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
@@ -177,9 +189,11 @@ from app.api.v1.search import router as search_router
 from app.api.v1.query import router as query_router
 from app.api.v1.chat import router as chat_router
 from app.api.v1.map import router as map_router
+from app.api.v1.auth import router as auth_router
 
 app.include_router(ingestion_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1/search")
 app.include_router(query_router, prefix="/api/v1")
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(map_router, prefix="/api/v1")
+app.include_router(auth_router, prefix="/api/v1")

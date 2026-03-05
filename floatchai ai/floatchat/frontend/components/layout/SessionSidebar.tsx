@@ -24,6 +24,7 @@ import {
   BarChart2,
   Map,
   X,
+  LogOut,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ import {
 import { Input } from "@/components/ui/input";
 
 import { useChatStore } from "@/store/chatStore";
+import { useAuthStore } from "@/store/authStore";
 import {
   listSessions,
   createSession,
@@ -52,6 +54,8 @@ import {
 } from "@/lib/api";
 import type { ChatSession } from "@/types/chat";
 import ThemeToggle from "@/components/layout/ThemeToggle";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // ── Relative time helper ───────────────────────────────────────────────────
 
@@ -71,6 +75,17 @@ function relativeTime(isoString: string): string {
   return date.toLocaleDateString();
 }
 
+function getInitials(name?: string | null): string {
+  if (!name) return "U";
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "U";
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
+  return `${parts[0].slice(0, 1)}${parts[parts.length - 1].slice(0, 1)}`.toUpperCase();
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 interface SessionSidebarProps {
@@ -88,6 +103,10 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
   const addSession = useChatStore((s) => s.addSession);
   const removeSession = useChatStore((s) => s.removeSession);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
+
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const clearAuth = useAuthStore((s) => s.clearAuth);
 
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
@@ -192,6 +211,31 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
     },
     [removeSession, activeSessionId, setActiveSession, router],
   );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch(`${API_BASE}/api/v1/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+        headers: accessToken
+          ? {
+              Authorization: `Bearer ${accessToken}`,
+            }
+          : undefined,
+      });
+    } catch {
+      // Ignore logout request failure; local logout still proceeds.
+    } finally {
+      clearAuth();
+      setSessions([]);
+      setActiveSession(null);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("floatchat_user_id");
+      }
+      router.push("/login");
+      onClose();
+    }
+  }, [accessToken, clearAuth, onClose, router, setActiveSession, setSessions]);
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -347,6 +391,32 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
             </div>
             <ThemeToggle />
           </div>
+
+          {currentUser ? (
+            <div className="mt-3 border-t border-border pt-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ocean-primary text-sm font-semibold text-text-inverse">
+                    {getInitials(currentUser.name)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-text-primary">{currentUser.name}</p>
+                    <p className="truncate text-xs text-text-secondary">{currentUser.email}</p>
+                  </div>
+                </div>
+
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  aria-label="Log out"
+                  className="h-8 w-8 text-text-secondary hover:text-text-primary"
+                >
+                  <LogOut className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </aside>
 

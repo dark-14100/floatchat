@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.config import get_settings
 from app.db.session import get_readonly_db
 from app.query.context import append_context, clear_context, get_context
@@ -28,7 +29,7 @@ from app.query.pipeline import nl_to_sql, interpret_results, get_llm_client, _PR
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/query", tags=["Query"])
+router = APIRouter(prefix="/query", tags=["Query"], dependencies=[Depends(get_current_user)])
 
 
 # ── Redis client helper (local to this router, Gap 6) ──────────────────────

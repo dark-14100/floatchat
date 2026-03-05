@@ -274,10 +274,12 @@ cp .env.example .env
 alembic upgrade head
 ```
 
-This runs all three migrations:
+This runs all current migrations:
 - **001** — Feature 1 schema (floats, profiles, measurements, datasets, float_positions, ingestion_jobs)
 - **002** — Feature 2 schema (BIGINT columns, ocean_regions, dataset_versions, indexes, materialized views, readonly user)
 - **003** — Feature 3 schema (pgvector extension, dataset_embeddings, float_embeddings, HNSW indexes)
+- **004** — Feature 5 schema (chat_sessions, chat_messages)
+- **005** — Feature 13 schema (users, password_reset_tokens)
 
 ### 5. Seed ocean regions
 
@@ -309,7 +311,7 @@ celery -A celery_worker.celery beat --loglevel=info
 
 ## API Endpoints
 
-All endpoints require admin JWT authentication via `Authorization: Bearer <token>`.
+The ingestion endpoints below require **admin JWT** authentication via `Authorization: Bearer <token>`.
 
 ### `POST /api/v1/datasets/upload`
 
@@ -597,7 +599,8 @@ Feature 5 adds a chat backend with session management, SSE streaming, message pe
 | POST | `/api/v1/chat/sessions/{id}/query/confirm` | Confirm large query |
 | GET | `/api/v1/chat/suggestions` | Load-time suggestions |
 
-All endpoints use `X-User-ID` header for user identification.
+All chat endpoints require a valid bearer access token and resolve the user from JWT `sub`.
+`X-User-ID` is retained only on `/api/v1/auth/signup` and `/api/v1/auth/login` to migrate anonymous sessions created before authentication.
 
 ### Feature 5 Environment Variables
 
@@ -625,6 +628,38 @@ pytest tests/test_chat_api.py tests/test_suggestions.py -v
 
 - `test_chat_api.py` — 40 tests (session CRUD, SSE streaming, confirmation, error handling)
 - `test_suggestions.py` — 28 tests (load-time suggestions, caching, follow-ups, fallbacks)
+
+---
+
+## Feature 13: Authentication & Account Management
+
+Feature 13 adds account-based authentication across backend and frontend, including JWT access tokens, HttpOnly refresh cookies, password reset flows, and authenticated route protection.
+
+### What Was Built
+
+| Component | Description |
+|-----------|-------------|
+| **Migration 005** | Creates `users` and `password_reset_tokens` tables with email uniqueness and reset-token indexes |
+| **Auth Router** | 7 endpoints at `/api/v1/auth/`: signup, login, logout, me, refresh, forgot-password, reset-password |
+| **JWT Model** | Short-lived bearer access token + refresh cookie (`floatchat_refresh`) with token type validation |
+| **Password Security** | Password hashing + verification, non-enumerating forgot-password response, one-time reset tokens |
+| **Frontend Integration** | Middleware guards, auth store bootstrap via refresh, and automatic 401 refresh-retry in API client |
+
+### Authentication Model
+
+- **Public:** `/health`, `GET /api/v1/search/*`, `/api/v1/auth/signup`, `/api/v1/auth/login`, `/api/v1/auth/refresh`, `/api/v1/auth/forgot-password`, `/api/v1/auth/reset-password`
+- **Authenticated user:** `/api/v1/query/*`, `/api/v1/chat/*`, `/api/v1/map/*`, `/api/v1/auth/me`, `/api/v1/auth/logout`
+- **Admin only:** `/api/v1/datasets/*`, `POST /api/v1/search/reindex/{dataset_id}`
+
+### Feature 13 Environment Variables
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+| `JWT_SECRET_KEY` | string | — | Required signing key for Feature 13 access/refresh JWTs (min 32 chars) |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | int | `15` | Access token lifetime |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | int | `7` | Refresh cookie/token lifetime |
+| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | int | `60` | Password reset token lifetime |
+| `FRONTEND_URL` | string | `http://localhost:3000` | Base URL used to build reset-password links |
 
 ---
 
@@ -734,7 +769,12 @@ After all profiles are written, computes dataset statistics:
 | `LLM_TIMEOUT_SECONDS` | `30` | LLM request timeout |
 | `MAX_UPLOAD_SIZE_BYTES` | `2147483648` | Max upload size (2 GB) |
 | `DB_INSERT_BATCH_SIZE` | `1000` | Measurement insert batch size |
-| `SECRET_KEY` | `dev-secret-...` | JWT signing key (**change in production**) |
+| `SECRET_KEY` | `dev-secret-...` | Legacy JWT signing key used by older admin auth helpers |
+| `JWT_SECRET_KEY` | — | Primary JWT signing key for Feature 13 access/refresh tokens (**required**) |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token expiry (minutes) |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token expiry (days) |
+| `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | `60` | Password reset token expiry (minutes) |
+| `FRONTEND_URL` | `http://localhost:3000` | Frontend URL used for reset-password links |
 | `SENTRY_DSN` | — | Optional: Sentry error tracking |
 | `DEBUG` | `False` | Enables `/docs` Swagger UI |
 | `LOG_LEVEL` | `INFO` | structlog level |
@@ -753,7 +793,7 @@ After all profiles are written, computes dataset statistics:
 
 ## Database Schema
 
-10 tables + 2 materialized views created via Alembic migrations (`001_initial_schema.py` + `002_ocean_database.py` + `003_metadata_search.py`). PostGIS, pgcrypto, pgvector, and pg_trgm extensions enabled.
+14 tables + 2 materialized views created via Alembic migrations (`001_initial_schema.py` + `002_ocean_database.py` + `003_metadata_search.py` + `004_chat_interface.py` + `005_auth.py`). PostGIS, pgcrypto, pgvector, and pg_trgm extensions enabled.
 
 ### `floats`
 One record per unique ARGO float, keyed by `platform_number`.
@@ -1196,6 +1236,7 @@ These invariants are enforced across the codebase:
 | Phase 5 | Chat interface (backend + frontend) | ✅ Complete |
 | Phase 6 | Public prototype + chart experience | ✅ Complete |
 | Phase 7 | Geospatial map exploration | ✅ Complete |
+| Phase 13 | Authentication & account management | ✅ Complete |
 
 ---
 
@@ -1311,3 +1352,10 @@ frontend/
   - `SearchBar.test.tsx`
   - `BasinFilterPanel.test.tsx`
   - `ChatSessionPrefill.test.tsx`
+
+---
+
+## Static Data Files
+
+- `floatchai ai/floatchat/backend/data/` stores static data files used by backend features.
+- `geography_lookup.json` is used by Feature 4 (NL Query Engine) via `GEOGRAPHY_FILE_PATH`.

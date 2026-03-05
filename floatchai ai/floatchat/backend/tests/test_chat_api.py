@@ -7,7 +7,7 @@ Covers:
   - SSE streaming query (event sequence, error handling, confirmation flow)
   - Confirmation endpoint (server-stored SQL retrieval + execution)
   - Suggestions endpoint (load-time suggestions)
-  - X-User-ID isolation (sessions scoped by user)
+    - Authenticated user isolation (sessions scoped by user)
   - Message persistence (user + assistant messages saved)
 
 All external pipeline calls (nl_to_sql, execute_sql, estimate_rows,
@@ -24,7 +24,8 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.db.models import ChatSession, ChatMessage
+from app.auth.jwt import create_token
+from app.db.models import ChatSession, ChatMessage, User
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -58,10 +59,58 @@ def chat_client(db_session) -> Generator[TestClient, None, None]:
 
 USER_A = "user-aaa-111"
 USER_B = "user-bbb-222"
+_TOKEN_BY_USER: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def _seed_auth_users(db_session: Session):
+    """Seed two authenticated users and generate valid access tokens."""
+    global _TOKEN_BY_USER
+
+    user_a = User(
+        user_id=uuid.uuid4(),
+        email="user-a@example.com",
+        hashed_password="test-hash",
+        name="User A",
+        role="researcher",
+        is_active=True,
+    )
+    user_b = User(
+        user_id=uuid.uuid4(),
+        email="user-b@example.com",
+        hashed_password="test-hash",
+        name="User B",
+        role="researcher",
+        is_active=True,
+    )
+    db_session.add_all([user_a, user_b])
+    db_session.commit()
+
+    _TOKEN_BY_USER = {
+        USER_A: create_token(
+            {
+                "sub": str(user_a.user_id),
+                "email": user_a.email,
+                "role": user_a.role,
+            },
+            token_type="access",
+        ),
+        USER_B: create_token(
+            {
+                "sub": str(user_b.user_id),
+                "email": user_b.email,
+                "role": user_b.role,
+            },
+            token_type="access",
+        ),
+    }
+
+    yield
+    _TOKEN_BY_USER = {}
 
 
 def _headers(user_id: str = USER_A) -> dict:
-    return {"X-User-ID": user_id}
+    return {"Authorization": f"Bearer {_TOKEN_BY_USER[user_id]}"}
 
 
 def _create_session(client: TestClient, name: str | None = None, user_id: str = USER_A) -> dict:
@@ -789,7 +838,7 @@ class TestSuggestionsEndpoint:
             {"query": "Count profiles", "description": "Get counts"},
         ]
 
-        resp = chat_client.get("/api/v1/chat/suggestions")
+        resp = chat_client.get("/api/v1/chat/suggestions", headers=_headers())
         assert resp.status_code == 200
         body = resp.json()
         assert "suggestions" in body
@@ -803,7 +852,7 @@ class TestSuggestionsEndpoint:
             {"query": "Fallback query", "description": "Fallback"},
         ]
 
-        resp = chat_client.get("/api/v1/chat/suggestions")
+        resp = chat_client.get("/api/v1/chat/suggestions", headers=_headers())
         assert resp.status_code == 200
         assert len(resp.json()["suggestions"]) >= 1
 

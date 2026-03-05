@@ -2,50 +2,10 @@
  * FloatChat — Map API Client (Feature 7)
  *
  * Typed async functions for all map backend API calls.
- * Follows the same pattern as `lib/api.ts`.
+ * Uses shared auth-aware `apiFetch` from `lib/api.ts`.
  */
 
-import { ApiError } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const API_V1 = `${API_BASE}/api/v1`;
-
-function getUserId(): string {
-  if (typeof window === "undefined") return "";
-  let uid = localStorage.getItem("floatchat_user_id");
-  if (!uid) {
-    uid = crypto.randomUUID();
-    localStorage.setItem("floatchat_user_id", uid);
-  }
-  return uid;
-}
-
-async function apiFetch<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "X-User-ID": getUserId(),
-    ...(options.headers as Record<string, string> | undefined),
-  };
-
-  const res = await fetch(`${API_V1}${path}`, {
-    ...options,
-    headers,
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, res.statusText, body);
-  }
-
-  if (res.status === 204) {
-    return undefined as T;
-  }
-
-  return res.json() as Promise<T>;
-}
+import { apiFetch } from "@/lib/api";
 
 export interface ActiveFloat {
   platform_number: string;

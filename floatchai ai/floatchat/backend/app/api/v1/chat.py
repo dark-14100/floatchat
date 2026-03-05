@@ -20,17 +20,18 @@ from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.orm import Session
 
+from app.auth.dependencies import get_current_user
 from app.chat.follow_ups import generate_follow_up_suggestions
 from app.chat.suggestions import generate_load_time_suggestions
 from app.config import get_settings
-from app.db.models import ChatSession, ChatMessage
+from app.db.models import ChatSession, ChatMessage, User
 from app.db.session import get_db, get_readonly_db
 from app.query.context import append_context, get_context
 from app.query.executor import estimate_rows, execute_sql
@@ -39,7 +40,7 @@ from app.query.pipeline import nl_to_sql, interpret_results, get_llm_client
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["Chat"])
+router = APIRouter(prefix="/chat", tags=["Chat"], dependencies=[Depends(get_current_user)])
 
 
 # ── Request / Response schemas ──────────────────────────────────────────────
@@ -82,11 +83,6 @@ class MessageResponse(BaseModel):
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
-def _get_user_id(x_user_id: Optional[str] = Header(None)) -> Optional[str]:
-    """Extract user identifier from X-User-ID header."""
-    return x_user_id
-
-
 def _session_to_response(session: ChatSession) -> SessionResponse:
     """Convert a ChatSession ORM object to a response model."""
     return SessionResponse(
@@ -122,9 +118,10 @@ def _message_to_response(msg: ChatMessage) -> MessageResponse:
 def create_session(
     request: CreateSessionRequest = CreateSessionRequest(),
     db: Session = Depends(get_db),
-    user_id: Optional[str] = Depends(_get_user_id),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new chat session."""
+    user_id = str(current_user.user_id)
     session = ChatSession(
         session_id=uuid.uuid4(),
         user_identifier=user_id,
@@ -151,20 +148,19 @@ def create_session(
 @router.get("/sessions", response_model=list[SessionResponse])
 def list_sessions(
     db: Session = Depends(get_db),
-    user_id: Optional[str] = Depends(_get_user_id),
+    current_user: User = Depends(get_current_user),
 ):
     """
     List all active sessions for the current user.
 
-    Filtered by X-User-ID header. Ordered by last_active_at descending.
+    Filtered by authenticated user. Ordered by last_active_at descending.
     """
+    user_id = str(current_user.user_id)
     stmt = (
         select(ChatSession)
         .where(ChatSession.is_active == True)  # noqa: E712
+        .where(ChatSession.user_identifier == user_id)
     )
-
-    if user_id:
-        stmt = stmt.where(ChatSession.user_identifier == user_id)
 
     stmt = stmt.order_by(ChatSession.last_active_at.desc())
 

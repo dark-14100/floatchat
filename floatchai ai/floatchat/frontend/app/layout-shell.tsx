@@ -6,35 +6,118 @@
  * Handles:
  * - Sidebar open/close state
  * - Hamburger toggle on mobile (<768px)
- * - Anonymous UUID generation + localStorage persistence
+ * - Auth bootstrap via silent refresh on protected routes
+ * - Bypasses shell chrome for auth pages
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import SessionSidebar from "@/components/layout/SessionSidebar";
 import BackgroundIllustration from "@/components/layout/BackgroundIllustration";
+import { useAuthStore } from "@/store/authStore";
+import type { RefreshResponse } from "@/types/auth";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 interface LayoutShellProps {
   children: React.ReactNode;
 }
 
 export function LayoutShell({ children }: LayoutShellProps) {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isAuthInitializing, setIsAuthInitializing] = useState(true);
+  const hasInitializedAuth = useRef(false);
+
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const clearAuth = useAuthStore((state) => state.clearAuth);
+  const currentUser = useAuthStore((state) => state.currentUser);
+  const accessToken = useAuthStore((state) => state.accessToken);
+
   const pathname = usePathname();
+  const isAuthRoute = AUTH_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
   const isMapRoute = pathname === "/map";
 
-  // ── Generate anonymous user UUID on first visit ──────────────────────
-
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!localStorage.getItem("floatchat_user_id")) {
-      localStorage.setItem("floatchat_user_id", crypto.randomUUID());
+    if (isAuthRoute) {
+      setIsAuthInitializing(false);
+      return;
     }
-  }, []);
+
+    if (hasInitializedAuth.current) {
+      setIsAuthInitializing(false);
+      return;
+    }
+
+    if (currentUser && accessToken) {
+      hasInitializedAuth.current = true;
+      setIsAuthInitializing(false);
+      return;
+    }
+
+    hasInitializedAuth.current = true;
+
+    const initializeAuth = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          clearAuth();
+          const redirectTarget =
+            typeof window !== "undefined"
+              ? `${window.location.pathname}${window.location.search}`
+              : pathname;
+          router.replace(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
+          return;
+        }
+
+        const payload = (await response.json()) as RefreshResponse;
+        setAuth(payload.user, payload.access_token);
+      } catch {
+        clearAuth();
+        const redirectTarget =
+          typeof window !== "undefined"
+            ? `${window.location.pathname}${window.location.search}`
+            : pathname;
+        router.replace(`/login?redirect=${encodeURIComponent(redirectTarget)}`);
+      } finally {
+        setIsAuthInitializing(false);
+      }
+    };
+
+    void initializeAuth();
+  }, [isAuthRoute, currentUser, accessToken, setAuth, clearAuth, pathname, router]);
 
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
+  if (isAuthRoute) {
+    return <>{children}</>;
+  }
+
+  if (isAuthInitializing) {
+    return (
+      <>
+        <BackgroundIllustration />
+        <div className="relative z-[1] flex min-h-screen items-center justify-center bg-bg-base text-text-secondary">
+          <div className="flex items-center gap-2 text-sm">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            <span>Restoring your session…</span>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
