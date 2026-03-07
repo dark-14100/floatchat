@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -30,16 +31,21 @@ import {
   type BasinPolygonFeature,
 } from "@/lib/mapQueries";
 import type { FloatTypeFilter } from "@/components/map/MapToolbar";
+import type { AnomalyListItem } from "@/types/anomaly";
 
 interface ExplorationMapProps {
   selectedFloat: string | null;
+  selectedAnomalyId: string | null;
   floatTypeFilter: FloatTypeFilter;
   activeBasin: string | null;
   basinFloats: BasinFloat[] | null;
   drawnRadius: { center: { lat: number; lon: number }; radius_km: number } | null;
   drawCircleMode: boolean;
+  showAnomalyOverlay: boolean;
+  anomalyItems: AnomalyListItem[];
   onMapClick: (lat: number, lon: number) => void;
   onFloatClick: (platformNumber: string) => void;
+  onAnomalyClick: (anomalyId: string) => void;
   onCircleDrawn: (payload: { center: { lat: number; lon: number }; radius_km: number }) => void;
   onCircleModeHandled: () => void;
   onFloatsLoaded?: (floats: ActiveFloat[]) => void;
@@ -65,13 +71,17 @@ const ExplorationMap = forwardRef<ExplorationMapHandle, ExplorationMapProps>(
   (
     {
       selectedFloat,
+      selectedAnomalyId,
       floatTypeFilter,
       activeBasin,
       basinFloats,
       drawnRadius,
       drawCircleMode,
+      showAnomalyOverlay,
+      anomalyItems,
       onMapClick,
       onFloatClick,
+      onAnomalyClick,
       onCircleDrawn,
       onCircleModeHandled,
       onFloatsLoaded,
@@ -209,6 +219,25 @@ const ExplorationMap = forwardRef<ExplorationMapHandle, ExplorationMapProps>(
       });
     }, [baseFloats, floatTypeFilter]);
 
+    const visibleFloatIds = useMemo(() => {
+      return new Set(visibleFloats.map((row) => row.platform_number));
+    }, [visibleFloats]);
+
+    const visibleAnomalies = useMemo(() => {
+      return anomalyItems.filter((item) => {
+        if (item.latitude === null || item.longitude === null) {
+          return false;
+        }
+        return visibleFloatIds.has(item.platform_number);
+      });
+    }, [anomalyItems, visibleFloatIds]);
+
+    const anomalyMarkerColor = useCallback((severity: string) => {
+      if (severity === "high") return "var(--color-coral)";
+      if (severity === "medium") return "var(--color-sand)";
+      return "var(--color-seafoam)";
+    }, []);
+
     if (!isClient) {
       return (
         <div className="flex h-full w-full items-center justify-center bg-[var(--color-bg-surface)] text-[var(--color-text-secondary)]">
@@ -307,6 +336,41 @@ const ExplorationMap = forwardRef<ExplorationMapHandle, ExplorationMapProps>(
               );
             })}
           </MarkerClusterGroup>
+
+          {showAnomalyOverlay && (
+            <MarkerClusterGroup chunkedLoading>
+              {visibleAnomalies.map((item) => {
+                const isSelected = selectedAnomalyId === item.anomaly_id;
+                const markerColor = anomalyMarkerColor(item.severity);
+
+                return (
+                  <CircleMarker
+                    key={`anomaly-${item.anomaly_id}`}
+                    center={[item.latitude as number, item.longitude as number]}
+                    radius={isSelected ? 9 : 7}
+                    pathOptions={{
+                      color: isSelected ? cssVars.surface : markerColor,
+                      weight: isSelected ? 2 : 1,
+                      fillColor: markerColor,
+                      fillOpacity: item.is_reviewed ? 0.45 : 0.85,
+                    }}
+                    eventHandlers={{
+                      click: () => onAnomalyClick(item.anomaly_id),
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -4]}>
+                      <div className="text-xs">
+                        <div>{item.platform_number}</div>
+                        <div className="opacity-80">
+                          {item.severity} {item.variable}
+                        </div>
+                      </div>
+                    </Tooltip>
+                  </CircleMarker>
+                );
+              })}
+            </MarkerClusterGroup>
+          )}
         </MapContainer>
 
         {loading && (

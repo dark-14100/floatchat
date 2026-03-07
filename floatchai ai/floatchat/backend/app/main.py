@@ -283,6 +283,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.map import router as map_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.export import router as export_router
+from app.api.v1.anomalies import router as anomalies_router
 
 app.include_router(ingestion_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1/search")
@@ -291,3 +292,4 @@ app.include_router(chat_router, prefix="/api/v1")
 app.include_router(map_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(export_router, prefix="/api/v1")
+app.include_router(anomalies_router, prefix="/api/v1")

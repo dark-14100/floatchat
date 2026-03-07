@@ -13,6 +13,7 @@ Usage:
 """
 
 from celery import Celery
+from celery.schedules import crontab
 
 from app.config import settings
 
@@ -25,6 +26,7 @@ celery = Celery(
         "app.ingestion.tasks",
         "app.search.tasks",
         "app.export.tasks",
+        "app.anomaly.tasks",
     ],  # Auto-discover tasks modules
 )
 
@@ -59,6 +61,7 @@ celery.conf.update(
         "app.ingestion.tasks.retry_stale_jobs": {"queue": "default"},
         "app.search.tasks.index_dataset_task": {"queue": "default"},
         "app.export.tasks.generate_export_task": {"queue": "default"},
+        "app.anomaly.tasks.run_anomaly_scan": {"queue": "default"},
     },
     
     # Task default queue
@@ -78,6 +81,11 @@ celery.conf.update(
         "retry-failed-jobs": {
             "task": "app.ingestion.tasks.retry_stale_jobs",
             "schedule": 900.0,  # 15 minutes
+        },
+        # Nightly anomaly detection scan (Feature 15)
+        "run-anomaly-scan-nightly": {
+            "task": "app.anomaly.tasks.run_anomaly_scan",
+            "schedule": crontab(hour=2, minute=0),
         },
     },
 )

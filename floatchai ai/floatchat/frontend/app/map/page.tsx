@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getBasinFloats,
@@ -10,8 +10,10 @@ import {
   type BasinFloat,
   type NearestFloat,
 } from "@/lib/mapQueries";
+import { getAnomalies } from "@/lib/anomalyQueries";
 import type { FloatTypeFilter } from "@/components/map/MapToolbar";
 import type { ExplorationMapHandle } from "@/components/map/ExplorationMap";
+import type { AnomalyListItem } from "@/types/anomaly";
 
 const ExplorationMap = dynamic(
   () => import("@/components/map/ExplorationMap"),
@@ -38,6 +40,11 @@ const FloatDetailPanel = dynamic(
   { ssr: false },
 );
 
+const AnomalyDetailPanel = dynamic(
+  () => import("@/components/anomaly/AnomalyDetailPanel"),
+  { ssr: false },
+);
+
 const BasinFilterPanel = dynamic(
   () => import("@/components/map/BasinFilterPanel"),
   { ssr: false },
@@ -48,7 +55,7 @@ const SearchBar = dynamic(
   { ssr: false },
 );
 
-type ActivePanel = "none" | "nearest" | "radius" | "detail";
+type ActivePanel = "none" | "nearest" | "radius" | "detail" | "anomaly";
 
 export default function MapPage() {
   const mapRef = useRef<ExplorationMapHandle | null>(null);
@@ -60,11 +67,39 @@ export default function MapPage() {
   const [activeBasin, setActiveBasin] = useState<string | null>(null);
   const [basinFloats, setBasinFloats] = useState<BasinFloat[] | null>(null);
   const [drawCircleMode, setDrawCircleMode] = useState<boolean>(false);
+  const [showAnomalyOverlay, setShowAnomalyOverlay] = useState<boolean>(false);
 
   const [activeFloats, setActiveFloats] = useState<ActiveFloat[]>([]);
   const [floatTypeFilter, setFloatTypeFilter] = useState<FloatTypeFilter>("all");
   const [nearestFloats, setNearestFloats] = useState<NearestFloat[]>([]);
   const [nearestLoading, setNearestLoading] = useState<boolean>(false);
+  const [anomalyItems, setAnomalyItems] = useState<AnomalyListItem[]>([]);
+  const [selectedAnomalyId, setSelectedAnomalyId] = useState<string | null>(null);
+  const [anomaliesLoading, setAnomaliesLoading] = useState<boolean>(false);
+
+  const loadAnomalies = useCallback(async () => {
+    setAnomaliesLoading(true);
+    try {
+      const response = await getAnomalies({ days: 7, limit: 500, offset: 0 });
+      setAnomalyItems(response.items);
+    } catch {
+      setAnomalyItems([]);
+    } finally {
+      setAnomaliesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAnomalies();
+
+    const intervalId = window.setInterval(() => {
+      void loadAnomalies();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [loadAnomalies]);
 
   const filteredFloatsCount = useMemo(() => {
     const base = activeBasin && basinFloats ? basinFloats : activeFloats;
@@ -75,6 +110,7 @@ export default function MapPage() {
   const handleMapClick = useCallback(async (lat: number, lon: number) => {
     setSelectedPoint({ lat, lon });
     setSelectedFloat(null);
+    setSelectedAnomalyId(null);
     setActivePanel("nearest");
 
     setNearestLoading(true);
@@ -90,7 +126,14 @@ export default function MapPage() {
 
   const handleFloatClick = useCallback((platformNumber: string) => {
     setSelectedFloat(platformNumber);
+    setSelectedAnomalyId(null);
     setActivePanel("detail");
+  }, []);
+
+  const handleAnomalyClick = useCallback((anomalyId: string) => {
+    setSelectedAnomalyId(anomalyId);
+    setSelectedFloat(null);
+    setActivePanel("anomaly");
   }, []);
 
   const clearNearest = useCallback(() => {
@@ -145,6 +188,9 @@ export default function MapPage() {
           <p className="text-xs text-[var(--color-text-secondary)]">
             Visible ({floatTypeFilter.toUpperCase()}): {filteredFloatsCount}
           </p>
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Anomalies (7d): {anomalyItems.length}{anomaliesLoading ? " (refreshing...)" : ""}
+          </p>
         </div>
 
         <div className="mb-3">
@@ -189,6 +235,19 @@ export default function MapPage() {
             />
           )}
 
+          {activePanel === "anomaly" && selectedAnomalyId && (
+            <AnomalyDetailPanel
+              anomalyId={selectedAnomalyId}
+              onClose={() => {
+                setSelectedAnomalyId(null);
+                setActivePanel("none");
+              }}
+              onReviewed={() => {
+                void loadAnomalies();
+              }}
+            />
+          )}
+
           {activePanel === "radius" && drawnRadius && (
             <RadiusQueryPanel
               center={drawnRadius.center}
@@ -226,13 +285,17 @@ export default function MapPage() {
         <ExplorationMap
           ref={mapRef}
           selectedFloat={selectedFloat}
+          selectedAnomalyId={selectedAnomalyId}
           floatTypeFilter={floatTypeFilter}
           activeBasin={activeBasin}
           basinFloats={basinFloats}
           drawnRadius={drawnRadius}
           drawCircleMode={drawCircleMode}
+          showAnomalyOverlay={showAnomalyOverlay}
+          anomalyItems={anomalyItems}
           onMapClick={handleMapClick}
           onFloatClick={handleFloatClick}
+          onAnomalyClick={handleAnomalyClick}
           onCircleDrawn={(payload) => {
             setDrawnRadius(payload);
             setActivePanel("radius");
@@ -247,6 +310,8 @@ export default function MapPage() {
           onDrawCircleToggle={() => setDrawCircleMode(true)}
           onDrawPolygonToggle={() => setActiveBasin(null)}
           onResetView={() => mapRef.current?.resetView()}
+          showAnomalyOverlay={showAnomalyOverlay}
+          onAnomalyOverlayToggle={() => setShowAnomalyOverlay((v) => !v)}
           floatTypeFilter={floatTypeFilter}
           onFloatTypeFilterChange={setFloatTypeFilter}
         />

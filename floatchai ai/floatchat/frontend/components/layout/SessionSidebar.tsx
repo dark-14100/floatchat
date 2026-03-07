@@ -23,6 +23,7 @@ import {
   MessagesSquare,
   BarChart2,
   Map,
+  Bell,
   X,
   LogOut,
 } from "lucide-react";
@@ -52,6 +53,7 @@ import {
   renameSession,
   deleteSession,
 } from "@/lib/api";
+import { getUnreviewedAnomalyCount } from "@/lib/anomalyQueries";
 import type { ChatSession } from "@/types/chat";
 import ThemeToggle from "@/components/layout/ThemeToggle";
 
@@ -112,6 +114,7 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<ChatSession | null>(null);
   const [renameName, setRenameName] = useState("");
+  const [unreviewedAnomalyCount, setUnreviewedAnomalyCount] = useState(0);
 
   // ── Load sessions on mount ─────────────────────────────────────────────
 
@@ -122,6 +125,31 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
         // API unavailable — keep empty list
       });
   }, [setSessions]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshAnomalyCount = async () => {
+      try {
+        const count = await getUnreviewedAnomalyCount(7);
+        if (!mounted) return;
+        setUnreviewedAnomalyCount(count);
+      } catch {
+        if (!mounted) return;
+        setUnreviewedAnomalyCount(0);
+      }
+    };
+
+    void refreshAnomalyCount();
+    const intervalId = window.setInterval(() => {
+      void refreshAnomalyCount();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   // ── Derive active session from pathname ────────────────────────────────
 
@@ -372,6 +400,19 @@ export default function SessionSidebar({ isOpen, onClose }: SessionSidebarProps)
         <div className="border-t border-border px-3 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
+              <Link
+                href="/anomalies"
+                onClick={onClose}
+                className="relative flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                <Bell className="h-4 w-4" />
+                <span>Anomalies</span>
+                {unreviewedAnomalyCount > 0 ? (
+                  <span className="rounded-full bg-[var(--color-coral)] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-[var(--color-text-inverse)]">
+                    {unreviewedAnomalyCount > 99 ? "99+" : unreviewedAnomalyCount}
+                  </span>
+                ) : null}
+              </Link>
               <Link
                 href="/map"
                 onClick={onClose}

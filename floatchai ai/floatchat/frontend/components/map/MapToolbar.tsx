@@ -1,6 +1,6 @@
 "use client";
 
-import { Circle, Filter, Pentagon, RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { Circle, Filter, Pentagon, RotateCcw, TriangleAlert, ZoomIn, ZoomOut } from "lucide-react";
 
 export type FloatTypeFilter = "all" | "bgc" | "core";
 
@@ -10,6 +10,8 @@ interface MapToolbarProps {
   onDrawCircleToggle: () => void;
   onDrawPolygonToggle: () => void;
   onResetView: () => void;
+  showAnomalyOverlay: boolean;
+  onAnomalyOverlayToggle: () => void;
   floatTypeFilter: FloatTypeFilter;
   onFloatTypeFilterChange: (filter: FloatTypeFilter) => void;
 }
@@ -20,6 +22,8 @@ export default function MapToolbar({
   onDrawCircleToggle,
   onDrawPolygonToggle,
   onResetView,
+  showAnomalyOverlay,
+  onAnomalyOverlayToggle,
   floatTypeFilter,
   onFloatTypeFilterChange,
 }: MapToolbarProps) {
@@ -42,6 +46,19 @@ export default function MapToolbar({
       </button>
       <button className={baseBtn} onClick={onResetView} aria-label="Reset view" title="Reset view">
         <RotateCcw className="h-4 w-4" />
+      </button>
+      <button
+        className={[
+          baseBtn,
+          showAnomalyOverlay
+            ? "border-[var(--color-coral)] bg-[var(--color-coral)]/15 text-[var(--color-coral)]"
+            : "",
+        ].join(" ")}
+        onClick={onAnomalyOverlayToggle}
+        aria-label="Toggle anomaly overlay"
+        title="Toggle anomaly overlay"
+      >
+        <TriangleAlert className="h-4 w-4" />
       </button>
 
       <div className="mt-1 rounded-md border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-2 shadow-sm">

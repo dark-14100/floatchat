@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1–8, 13, and 14 complete; roadmap features 9–12 and 15 are planned
+> **Status:** In Development — Features 1–8, 13, 14, and 15 complete; roadmap features 9–12 are planned
 
 ---
 
@@ -36,11 +36,11 @@
 | 4 — Natural Language Query Engine | ✅ Complete |
 | 5 — Conversational Chat Interface | ✅ Complete |
 | 6 — Data Visualization Dashboard | ✅ Complete |
-| 7 — Geospatial Exploration | 🔄 In Progress |
+| 7 — Geospatial Exploration | ✅ Complete |
 | 13 — Authentication & User Management | ✅ Complete |
 | 8 — Data Export System | ✅ Complete |
 | 14 — RAG Pipeline | ✅ Complete |
-| 15 — Anomaly Detection | ⏳ Planned |
+| 15 — Anomaly Detection | ✅ Complete |
 | 9 — Guided Query Assistant | ⏳ Planned |
 | 10 — Dataset Management | ⏳ Planned |
 | 11 — API Layer | ⏳ Planned |
@@ -955,7 +955,7 @@ Retrieval-Augmented Generation layer that improves Feature 4 SQL accuracy by inj
 
 ## 15. Anomaly Detection
 
-**Status: ⏳ Planned — build after RAG Pipeline**
+**Status: ✅ Complete**
 
 ### Overview
 Nightly automated scanning of newly ingested profiles for contextually unusual oceanographic readings. Distinct from ingestion-time QC flagging (Feature 1) which catches physically impossible values — anomaly detection catches valid-but-unusual readings using contextual comparison. Anomaly investigation flow benefits from RAG being live.
@@ -988,13 +988,15 @@ Compares against pre-computed climatological monthly averages per region stored 
 
 #### 15.2 Anomaly Storage
 - Severity: `low`, `medium`, `high` based on deviation magnitude
-- Fields: `float_id`, `profile_id`, `anomaly_type`, `severity`, `variable`, `baseline_value`, `observed_value`, `deviation_percent`, `description`, `detected_at`, `region`, `is_reviewed`, `reviewed_by`
+- Fields: `float_id`, `profile_id`, `anomaly_type`, `severity`, `variable`, `baseline_value`, `observed_value`, `deviation_percent`, `description`, `detected_at`, `region`, `is_reviewed`, `reviewed_by`, `reviewed_at`
 
 #### 15.3 Frontend
 - Bell icon in SessionSidebar with unreviewed anomaly count badge
 - Anomaly detail panel: flagged profile vs baseline chart, metadata, "Investigate in Chat" deep link
 - Anomaly overlay on Feature 7's ExplorationMap: flagged float markers with warning indicator
 - `PATCH /api/v1/anomalies/{id}/review` to mark as reviewed
+- Dedicated anomalies page at `/anomalies` with filterable feed + detail view
+- Map toolbar overlay toggle (off by default)
 
 #### 15.4 Relationship to Feature 1
 - Feature 1 flags physically impossible values at ingestion (temperature > 40°C, salinity < 0 PSU)
@@ -1009,20 +1011,21 @@ Compares against pre-computed climatological monthly averages per region stored 
 - `GET /api/v1/anomalies` — list recent anomalies with filters
 - `GET /api/v1/anomalies/{anomaly_id}` — full detail
 - `PATCH /api/v1/anomalies/{anomaly_id}/review` — mark reviewed
+- `POST /api/v1/anomalies/baselines/compute` — admin baseline recomputation trigger
 
 ### Migration
 - `007_anomaly_detection.py` — `down_revision = "006"`
 
 ### Tasks for Developers
-- [ ] Create anomalies and anomaly_baselines tables migration
-- [ ] Build app/anomaly/ module with four detector classes
-- [ ] Build Celery beat scheduler task (nightly 02:00 UTC)
-- [ ] Compute and store initial anomaly_baselines from existing data
-- [ ] Build anomaly API endpoints
-- [ ] Build anomaly feed in SessionSidebar
-- [ ] Build anomaly detail panel
-- [ ] Add anomaly overlay to ExplorationMap
-- [ ] Write tests for each detector
+- [x] Create anomalies and anomaly_baselines tables migration
+- [x] Build app/anomaly/ module with four detector classes
+- [x] Build Celery beat scheduler task (nightly 02:00 UTC)
+- [x] Compute and store anomaly_baselines via CLI and admin trigger
+- [x] Build anomaly API endpoints
+- [x] Build anomaly feed in SessionSidebar and `/anomalies` page
+- [x] Build anomaly detail panel and chart
+- [x] Add anomaly overlay toggle and markers to ExplorationMap
+- [x] Write detector/task/API automated tests
 
 ---
 

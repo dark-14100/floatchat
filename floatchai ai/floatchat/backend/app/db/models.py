@@ -20,6 +20,8 @@ Tables:
     13. users - One row per authenticated user (Feature 13)
     14. password_reset_tokens - Password reset flow tokens (Feature 13)
     15. query_history - Successful NL query history for RAG retrieval (Feature 14)
+    16. anomalies - Nightly detected contextual anomalies (Feature 15)
+    17. anomaly_baselines - Seasonal/monthly anomaly baselines (Feature 15)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -642,3 +644,100 @@ class QueryHistory(Base):
     # One-directional relationships keep existing models additive-only.
     user: Mapped["User"] = relationship("User")
     session: Mapped[Optional["ChatSession"]] = relationship("ChatSession")
+
+
+# =============================================================================
+# 16. Anomalies (Feature 15)
+# =============================================================================
+class Anomaly(Base):
+    """Contextually unusual profile reading detected by nightly anomaly scan."""
+    __tablename__ = "anomalies"
+    __table_args__ = (
+        Index("ix_anomalies_detected_at", "detected_at"),
+        Index("ix_anomalies_float_id", "float_id"),
+        Index("ix_anomalies_is_reviewed_detected_at", "is_reviewed", "detected_at"),
+        Index("ix_anomalies_severity", "severity"),
+        CheckConstraint(
+            "anomaly_type IN ('spatial_baseline', 'float_self_comparison', 'cluster_pattern', 'seasonal_baseline')",
+            name="ck_anomalies_anomaly_type",
+        ),
+        CheckConstraint(
+            "severity IN ('low', 'medium', 'high')",
+            name="ck_anomalies_severity",
+        ),
+    )
+
+    anomaly_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    float_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("floats.float_id"),
+        nullable=False,
+    )
+    profile_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("profiles.profile_id"),
+        nullable=False,
+    )
+    anomaly_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)
+    variable: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_value: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    observed_value: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    deviation_percent: Mapped[Optional[float]] = mapped_column(Double, nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    region: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_reviewed: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=sa.text("false"),
+        nullable=False,
+    )
+    reviewed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # One-directional relationships keep existing models additive-only.
+    float_ref: Mapped["Float"] = relationship("Float")
+    profile: Mapped["Profile"] = relationship("Profile")
+    reviewer: Mapped[Optional["User"]] = relationship("User")
+
+
+# =============================================================================
+# 17. Anomaly Baselines (Feature 15)
+# =============================================================================
+class AnomalyBaseline(Base):
+    """Pre-computed monthly baselines by region/variable for seasonal detection."""
+    __tablename__ = "anomaly_baselines"
+    __table_args__ = (
+        UniqueConstraint(
+            "region",
+            "variable",
+            "month",
+            name="uq_anomaly_baselines_region_variable_month",
+        ),
+        Index(
+            "ix_anomaly_baselines_region_variable_month",
+            "region",
+            "variable",
+            "month",
+        ),
+        CheckConstraint("month BETWEEN 1 AND 12", name="ck_anomaly_baselines_month"),
+    )
+
+    baseline_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    region: Mapped[str] = mapped_column(String(100), nullable=False)
+    variable: Mapped[str] = mapped_column(String(50), nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    mean_value: Mapped[float] = mapped_column(Double, nullable=False)
+    std_dev: Mapped[float] = mapped_column(Double, nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

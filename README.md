@@ -353,6 +353,27 @@ Retrieval-Augmented Generation improves NL-to-SQL quality by reusing each user's
 
 ---
 
+### Feature 15 — Anomaly Detection ✅
+
+Nightly statistical anomaly detection surfaces contextually unusual readings that are physically valid but regionally or temporally unexpected.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Nightly scan orchestration | Celery beat task `app.anomaly.tasks.run_anomaly_scan` scheduled at 02:00 UTC |
+| Detector suite | Spatial baseline, float self-comparison, seasonal baseline, and cluster pattern detectors |
+| Detection safety | Per-detector fault isolation and final task-level exception guard |
+| Dedup logic | In-memory + persisted dedup on `(profile_id, anomaly_type, variable)` |
+| Frontend workflows | Sidebar anomaly bell + badge, `/anomalies` feed/detail page, map anomaly overlay toggle |
+| Review flow | `PATCH /api/v1/anomalies/{id}/review` updates review fields |
+| Baseline management | CLI script and admin endpoint to compute/upsert monthly regional baselines |
+
+**Configuration flags:**
+`ANOMALY_SCAN_ENABLED`, `ANOMALY_SCAN_WINDOW_HOURS`, `ANOMALY_SPATIAL_RADIUS_KM`, `ANOMALY_SPATIAL_MIN_PROFILES`, `ANOMALY_SPATIAL_THRESHOLD_STD`, `ANOMALY_SELF_COMPARISON_HISTORY`, `ANOMALY_SELF_COMPARISON_MIN_PROFILES`, `ANOMALY_SELF_COMPARISON_THRESHOLD_STD`, `ANOMALY_CLUSTER_RADIUS_KM`, `ANOMALY_CLUSTER_MIN_FLOATS`, `ANOMALY_CLUSTER_WINDOW_DAYS`, `ANOMALY_SEASONAL_MIN_SAMPLES`, `ANOMALY_SEASONAL_THRESHOLD_STD`
+
+---
+
 ## API Reference
 
 Full interactive documentation at `http://localhost:8000/docs` (requires `DEBUG=True`).
@@ -430,7 +451,7 @@ Content-Type: application/json
 
 ## Database Schema
 
-Created by Alembic migrations `001` through `006`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
+Created by Alembic migrations `001` through `007`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
 
 ### Core Tables
 
@@ -509,6 +530,22 @@ query_id (UUID PK) · nl_query · generated_sql · embedding (vector 1536) · ro
 user_id (FK CASCADE) · session_id (FK SET NULL) · provider · model · created_at
 ```
 Indexes: HNSW on `embedding` (`vector_cosine_ops`) · B-tree on `user_id` · B-tree on `created_at`
+
+### Anomaly Tables
+
+**`anomalies`**
+```
+anomaly_id (UUID PK) · float_id (FK) · profile_id (FK) · anomaly_type · severity · variable
+baseline_value · observed_value · deviation_percent · description · detected_at · region
+is_reviewed · reviewed_by (FK SET NULL) · reviewed_at
+```
+Indexes: B-tree on `detected_at` · `float_id` · `severity` · composite (`is_reviewed`, `detected_at`)
+
+**`anomaly_baselines`**
+```
+baseline_id (SERIAL PK) · region · variable · month · mean_value · std_dev · sample_count · computed_at
+```
+Constraints: unique (`region`, `variable`, `month`) · check (`month` between 1 and 12)
 
 ### Auth Tables
 
@@ -621,6 +658,24 @@ token_id (UUID PK) · user_id (FK CASCADE) · token_hash · expires_at · used
 | `RAG_SIMILARITY_THRESHOLD` | `0.4` | Max cosine distance allowed for retrieved examples |
 | `RAG_DEDUP_WINDOW_HOURS` | `24` | Soft dedup window for identical successful NL queries per user |
 
+### Anomaly Detection (Feature 15)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANOMALY_SCAN_ENABLED` | `True` | Master switch for nightly anomaly scan |
+| `ANOMALY_SCAN_WINDOW_HOURS` | `24` | Recency window for scanned profiles |
+| `ANOMALY_SPATIAL_RADIUS_KM` | `200` | Neighbor radius for spatial baseline |
+| `ANOMALY_SPATIAL_MIN_PROFILES` | `10` | Min comparison profiles for spatial detector |
+| `ANOMALY_SPATIAL_THRESHOLD_STD` | `2.0` | Spatial baseline z-score threshold |
+| `ANOMALY_SELF_COMPARISON_HISTORY` | `10` | Historical profiles per float for self-comparison |
+| `ANOMALY_SELF_COMPARISON_MIN_PROFILES` | `5` | Min historical profiles for self detector |
+| `ANOMALY_SELF_COMPARISON_THRESHOLD_STD` | `1.5` | Self-comparison z-score threshold |
+| `ANOMALY_CLUSTER_RADIUS_KM` | `500` | Spatial radius for cluster detector |
+| `ANOMALY_CLUSTER_MIN_FLOATS` | `3` | Minimum anomalous floats for cluster detection |
+| `ANOMALY_CLUSTER_WINDOW_DAYS` | `7` | Temporal window for cluster detection |
+| `ANOMALY_SEASONAL_MIN_SAMPLES` | `30` | Minimum baseline sample count |
+| `ANOMALY_SEASONAL_THRESHOLD_STD` | `2.0` | Seasonal baseline z-score threshold |
+
 ### Observability
 
 | Variable | Default | Description |
@@ -651,11 +706,12 @@ pytest tests/test_map_api.py -v                                                 
 pytest tests/test_export_api.py -v                                                                 # Feature 8
 pytest tests/test_auth_api.py -v                                                                   # Feature 13
 pytest tests/test_rag.py -v                                                                        # Feature 14
+pytest tests/test_anomaly_detectors.py tests/test_anomaly_tasks.py tests/test_anomaly_api.py -v   # Feature 15
 ```
 
 **Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
 
-**Current backend test run (2026-03-07):** `399 passed, 58 skipped`.
+**Current backend test run (2026-03-08):** `418 passed, 58 skipped`.
 
 ### Frontend
 
@@ -681,7 +737,8 @@ floatchat/
 │   │       ├── 003_metadata_search.py      # pgvector, embedding tables, HNSW indexes
 │   │       ├── 004_chat_interface.py       # chat_sessions, chat_messages
 │   │       ├── 005_auth.py                 # users, password_reset_tokens
-│   │       └── 006_rag_pipeline.py         # query_history, HNSW index, readonly grant
+│   │       ├── 006_rag_pipeline.py         # query_history, HNSW index, readonly grant
+│   │       └── 007_anomaly_detection.py    # anomalies, anomaly_baselines, indexes
 │   ├── app/
 │   │   ├── main.py                         # FastAPI app entry point
 │   │   ├── config.py                       # All environment settings (pydantic-settings)
@@ -693,12 +750,17 @@ floatchat/
 │   │   │   ├── chat.py                     # Chat session and SSE stream endpoints
 │   │   │   ├── map.py                      # Geospatial exploration endpoints
 │   │   │   ├── export.py                   # Export trigger and status endpoints
-│   │   │   └── auth.py                     # Authentication endpoints
+│   │   │   ├── auth.py                     # Authentication endpoints
+│   │   │   └── anomalies.py                # Anomaly feed/detail/review/baseline endpoints
 │   │   ├── auth/
 │   │   │   ├── jwt.py                      # Token generation and validation
 │   │   │   ├── passwords.py                # bcrypt hashing
 │   │   │   ├── dependencies.py             # get_current_user, get_current_admin_user
 │   │   │   └── email.py                    # Password reset email (stdout in dev)
+│   │   ├── anomaly/
+│   │   │   ├── detectors.py                # Four statistical anomaly detectors
+│   │   │   ├── baselines.py                # Seasonal baseline computation/upsert
+│   │   │   └── tasks.py                    # Nightly anomaly scan task
 │   │   ├── db/
 │   │   │   ├── models.py                   # SQLAlchemy ORM models
 │   │   │   ├── session.py                  # DB engines, get_db(), get_readonly_db()
@@ -737,7 +799,8 @@ floatchat/
 │   │   └── geography_lookup.json           # 50 ocean region bounding boxes
 │   ├── scripts/
 │   │   ├── seed_ocean_regions.py
-│   │   └── create_readonly_user.sql
+│   │   ├── create_readonly_user.sql
+│   │   └── compute_baselines.py            # Feature 15 baseline CLI
 │   ├── tests/
 │   ├── celery_worker.py
 │   ├── requirements.txt
@@ -747,18 +810,21 @@ floatchat/
     │   ├── chat/[session_id]/              # Main chat interface
     │   ├── dashboard/                      # Visualization dashboard
     │   ├── map/                            # Geospatial exploration
+    │   ├── anomalies/                      # Anomaly feed and detail workspace
     │   ├── login/ signup/                  # Auth pages
     │   └── forgot-password/ reset-password/
     ├── components/
     │   ├── chat/                           # ChatMessage, ChatInput, ResultTable, ExportButton
     │   ├── visualization/                  # Chart and map components
     │   ├── map/                            # Geospatial map components
+    │   ├── anomaly/                        # AnomalyFeedList, AnomalyDetailPanel, AnomalyComparisonChart
     │   ├── auth/                           # AuthCard, PasswordInput, PasswordStrength
     │   └── layout/                         # SessionSidebar, LayoutShell
     ├── lib/
     │   ├── api.ts                          # Auth-aware API client
     │   ├── mapQueries.ts                   # Map endpoint client
     │   ├── exportQueries.ts                # Export endpoint client
+    │   ├── anomalyQueries.ts               # Anomaly endpoint client
     │   ├── colorscales.ts                  # cmocean color arrays for Plotly
     │   └── detectResultShape.ts            # Chart type auto-selection
     ├── store/
@@ -829,3 +895,5 @@ floatchat/
 | v1.2 | Feature 7: Geospatial map exploration |
 | v1.3 | Feature 8: Data export (CSV, NetCDF, JSON) |
 | v1.4 | Feature 13: Authentication and user management |
+| v1.5 | Feature 14: RAG retrieval-augmented NL-to-SQL |
+| v1.6 | Feature 15: Anomaly detection and review workflows |

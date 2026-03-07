@@ -129,6 +129,23 @@ class Settings(BaseSettings):
     RAG_RETRIEVAL_LIMIT: int = 5
     RAG_SIMILARITY_THRESHOLD: float = 0.4
     RAG_DEDUP_WINDOW_HOURS: int = 24
+
+    # =========================================================================
+    # Anomaly Detection (Feature 15)
+    # =========================================================================
+    ANOMALY_SCAN_ENABLED: bool = True
+    ANOMALY_SCAN_WINDOW_HOURS: int = 24
+    ANOMALY_SPATIAL_RADIUS_KM: int = 200
+    ANOMALY_SPATIAL_MIN_PROFILES: int = 10
+    ANOMALY_SPATIAL_THRESHOLD_STD: float = 2.0
+    ANOMALY_SELF_COMPARISON_HISTORY: int = 10
+    ANOMALY_SELF_COMPARISON_MIN_PROFILES: int = 5
+    ANOMALY_SELF_COMPARISON_THRESHOLD_STD: float = 1.5
+    ANOMALY_CLUSTER_RADIUS_KM: int = 500
+    ANOMALY_CLUSTER_MIN_FLOATS: int = 3
+    ANOMALY_CLUSTER_WINDOW_DAYS: int = 7
+    ANOMALY_SEASONAL_MIN_SAMPLES: int = 30
+    ANOMALY_SEASONAL_THRESHOLD_STD: float = 2.0
     
     # Provider-specific API keys and base URLs
     DEEPSEEK_API_KEY: Optional[str] = None

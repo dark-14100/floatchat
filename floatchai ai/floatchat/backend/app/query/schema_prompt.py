@@ -21,6 +21,7 @@ ALLOWED_TABLES: set[str] = {
     "dataset_versions",
     "dataset_embeddings",
     "float_embeddings",
+    "anomalies",
     "mv_float_latest_position",
     "mv_dataset_stats",
 }
@@ -248,6 +249,31 @@ Vector embeddings per float for semantic search.
   status                VARCHAR(20)   NOT NULL, default 'indexed' — CHECK IN ('indexed','embedding_failed')
   created_at            TIMESTAMPTZ   NOT NULL, default now()
   updated_at            TIMESTAMPTZ   NOT NULL, default now()
+
+────────────────────────────────
+TABLE: anomalies
+────────────────────────────────
+Nightly context anomaly detections for researcher investigation workflows.
+
+  anomaly_id            UUID          PRIMARY KEY
+  float_id              INTEGER       NOT NULL, FK → floats.float_id
+  profile_id            BIGINT        NOT NULL, FK → profiles.profile_id
+  anomaly_type          VARCHAR(50)   NOT NULL — CHECK IN ('spatial_baseline','float_self_comparison','cluster_pattern','seasonal_baseline')
+  severity              VARCHAR(10)   NOT NULL — CHECK IN ('low','medium','high')
+  variable              VARCHAR(50)   NOT NULL — variable name (e.g. temperature, salinity)
+  baseline_value        DOUBLE        nullable
+  observed_value        DOUBLE        nullable
+  deviation_percent     DOUBLE        nullable
+  description           TEXT          NOT NULL
+  detected_at           TIMESTAMPTZ   NOT NULL, default now()
+  region                VARCHAR(100)  nullable
+  is_reviewed           BOOLEAN       NOT NULL, default false
+  reviewed_by           UUID          nullable, FK → users.user_id
+  reviewed_at           TIMESTAMPTZ   nullable
+
+Relationships:
+  - anomalies.float_id   → floats.float_id
+  - anomalies.profile_id → profiles.profile_id
 
 ═══════════════════════════════════════════════════════════════
 MATERIALIZED VIEWS
