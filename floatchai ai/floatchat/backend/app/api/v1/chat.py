@@ -14,6 +14,7 @@ Endpoints:
 """
 
 import json
+import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
@@ -32,11 +33,12 @@ from app.chat.follow_ups import generate_follow_up_suggestions
 from app.chat.suggestions import generate_load_time_suggestions
 from app.config import get_settings
 from app.db.models import ChatSession, ChatMessage, User
-from app.db.session import get_db, get_readonly_db
+from app.db.session import SessionLocal, get_db, get_readonly_db
 from app.query.context import append_context, get_context
 from app.query.executor import estimate_rows, execute_sql
 from app.query.geography import resolve_geography
 from app.query.pipeline import nl_to_sql, interpret_results, get_llm_client
+from app.query.rag import store_successful_query
 
 log = structlog.get_logger(__name__)
 
@@ -348,6 +350,35 @@ def _sse_event(event_type: str, payload: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
 
 
+def _store_successful_query_threadsafe(
+    nl_query: str,
+    generated_sql: str,
+    row_count: int,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    provider: str,
+    model: str,
+) -> None:
+    """Store query history using an isolated write session in worker threads."""
+    thread_db = SessionLocal()
+    try:
+        store_successful_query(
+            nl_query=nl_query,
+            generated_sql=generated_sql,
+            row_count=row_count,
+            user_id=user_id,
+            session_id=session_id,
+            provider=provider,
+            model=model,
+            db=thread_db,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Defensive fallback; store_successful_query itself already absorbs errors.
+        log.warning("rag_store_thread_failed", session_id=str(session_id), error=str(exc))
+    finally:
+        thread_db.close()
+
+
 # ── Request schemas for query endpoints ─────────────────────────────────────
 
 class QuerySSERequest(BaseModel):
@@ -376,6 +407,7 @@ async def query_sse(
     request: QuerySSERequest,
     db: Session = Depends(get_db),
     readonly_db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     SSE streaming query endpoint (FR-06).
@@ -415,6 +447,8 @@ async def query_sse(
                 context=context,
                 geography=geography,
                 settings=settings,
+                user_id=current_user.user_id,
+                db=readonly_db,
             )
 
             # Handle pipeline error
@@ -534,6 +568,28 @@ async def query_sse(
                 "attempt_count": pipeline_result.retries_used,
             }
             yield _sse_event("results", results_payload)
+
+            if exec_result.row_count > 0 and current_user is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.run_in_executor(
+                        None,
+                        _store_successful_query_threadsafe,
+                        request.query,
+                        sql,
+                        exec_result.row_count,
+                        current_user.user_id,
+                        session.session_id,
+                        pipeline_result.provider,
+                        pipeline_result.model,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "rag_store_schedule_failed",
+                        session_id=str(session.session_id),
+                        user_id=str(current_user.user_id),
+                        error=str(exc),
+                    )
 
             # 10. Follow-up suggestions (must not block results — Hard Rule 2)
             try:

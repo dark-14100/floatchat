@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.config import get_settings
+from app.db.models import User
 from app.db.session import get_readonly_db
 from app.query.context import append_context, clear_context, get_context
 from app.query.executor import estimate_rows, execute_sql
@@ -101,6 +102,7 @@ class BenchmarkResponse(BaseModel):
 async def query_endpoint(
     request: QueryRequest,
     db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Natural language query endpoint.
@@ -126,6 +128,8 @@ async def query_endpoint(
         settings=settings,
         provider=request.provider,
         model=request.model,
+        user_id=current_user.user_id,
+        db=db,
     )
 
     if pipeline_result.error or not pipeline_result.sql:
@@ -259,6 +263,7 @@ async def benchmark_endpoint(request: BenchmarkRequest):
                 geography=geography,
                 settings=settings,
                 provider=provider,
+                # Benchmark remains static-only (no user/db retrieval context).
             )
             latency_ms = (time.time() - t0) * 1000
 

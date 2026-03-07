@@ -19,10 +19,13 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
+from uuid import UUID
 
 import structlog
 from openai import OpenAI
+from sqlalchemy.orm import Session
 
+from app.query.rag import build_rag_context, retrieve_similar_queries
 from app.query.schema_prompt import SCHEMA_PROMPT
 from app.query.validator import validate_sql
 
@@ -129,6 +132,7 @@ def _build_messages(
     query: str,
     context: list[dict],
     geography: Optional[dict],
+    rag_context: str = "",
     validation_error: Optional[str] = None,
 ) -> list[dict]:
     """
@@ -141,7 +145,12 @@ def _build_messages(
       - user: the current query
       - (optional) user addendum: previous validation error for retry
     """
-    messages = [{"role": "system", "content": SCHEMA_PROMPT}]
+    system_prompt = SCHEMA_PROMPT
+    if rag_context:
+        # Keep SCHEMA_PROMPT unchanged and prepend dynamic history context.
+        system_prompt = f"{rag_context}\n\n{SCHEMA_PROMPT}"
+
+    messages = [{"role": "system", "content": system_prompt}]
 
     # Inject geography context if resolved
     if geography:
@@ -222,6 +231,8 @@ async def nl_to_sql(
     settings,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    user_id: Optional[UUID] = None,
+    db: Optional[Session] = None,
 ) -> PipelineResult:
     """
     Core NL-to-SQL pipeline.
@@ -260,13 +271,36 @@ async def nl_to_sql(
         result.error = str(exc)
         return result
 
+    rag_context = ""
+    if getattr(settings, "ENABLE_RAG_RETRIEVAL", False) and user_id is not None and db is not None:
+        try:
+            similar_queries = retrieve_similar_queries(
+                nl_query=query,
+                user_id=user_id,
+                db=db,
+            )
+            rag_context = build_rag_context(similar_queries)
+        except Exception as exc:
+            log.warning(
+                "rag_retrieval_failed",
+                user_id=str(user_id),
+                error=str(exc),
+            )
+            rag_context = ""
+
     validation_error: Optional[str] = None
 
     for attempt in range(max_retries):
         result.retries_used = attempt
 
         # Build messages
-        messages = _build_messages(query, context, geography, validation_error)
+        messages = _build_messages(
+            query=query,
+            context=context,
+            geography=geography,
+            rag_context=rag_context,
+            validation_error=validation_error,
+        )
 
         # Call LLM
         try:

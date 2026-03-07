@@ -19,6 +19,7 @@ Tables:
     12. chat_messages - One row per message in a conversation (Feature 5)
     13. users - One row per authenticated user (Feature 13)
     14. password_reset_tokens - Password reset flow tokens (Feature 13)
+    15. query_history - Successful NL query history for RAG retrieval (Feature 14)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -602,3 +603,42 @@ class PasswordResetToken(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="password_reset_tokens")
+
+
+# =============================================================================
+# 15. Query History (Feature 14)
+# =============================================================================
+class QueryHistory(Base):
+    """Successful query history used for tenant-scoped RAG retrieval."""
+    __tablename__ = "query_history"
+    __table_args__ = (
+        Index("ix_query_history_user_id", "user_id"),
+        Index("ix_query_history_created_at", "created_at"),
+    )
+
+    query_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    nl_query: Mapped[str] = mapped_column(Text, nullable=False)
+    generated_sql: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(1536), nullable=False)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_sessions.session_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # One-directional relationships keep existing models additive-only.
+    user: Mapped["User"] = relationship("User")
+    session: Mapped[Optional["ChatSession"]] = relationship("ChatSession")

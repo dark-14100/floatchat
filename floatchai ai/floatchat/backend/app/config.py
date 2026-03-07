@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     QUERY_CONTEXT_MAX_TURNS: int = 20
     QUERY_BENCHMARK_TIMEOUT: int = 60  # Total timeout (seconds) for benchmark endpoint
     GEOGRAPHY_FILE_PATH: str = "data/geography_lookup.json"
+
+    # =========================================================================
+    # RAG Pipeline (Feature 14)
+    # =========================================================================
+    ENABLE_RAG_RETRIEVAL: bool = True
+    RAG_RETRIEVAL_LIMIT: int = 5
+    RAG_SIMILARITY_THRESHOLD: float = 0.4
+    RAG_DEDUP_WINDOW_HOURS: int = 24
     
     # Provider-specific API keys and base URLs
     DEEPSEEK_API_KEY: Optional[str] = None

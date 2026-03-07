@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1–6 complete, Feature 7 in progress, Feature 8 complete
+> **Status:** In Development — Features 1–8, 13, and 14 complete; roadmap features 9–12 and 15 are planned
 
 ---
 
@@ -37,9 +37,9 @@
 | 5 — Conversational Chat Interface | ✅ Complete |
 | 6 — Data Visualization Dashboard | ✅ Complete |
 | 7 — Geospatial Exploration | 🔄 In Progress |
-| 13 — Authentication & User Management | ⏳ Next |
+| 13 — Authentication & User Management | ✅ Complete |
 | 8 — Data Export System | ✅ Complete |
-| 14 — RAG Pipeline | ⏳ Planned |
+| 14 — RAG Pipeline | ✅ Complete |
 | 15 — Anomaly Detection | ⏳ Planned |
 | 9 — Guided Query Assistant | ⏳ Planned |
 | 10 — Dataset Management | ⏳ Planned |
@@ -898,10 +898,10 @@ JWT-based authentication with RBAC. Enables multi-tenant session isolation, prot
 
 ## 14. RAG Pipeline
 
-**Status: ⏳ Planned — build after Auth and Export**
+**Status: ✅ Complete**
 
 ### Overview
-Retrieval-Augmented Generation layer that improves Feature 4's SQL accuracy by dynamically injecting past successful queries as few-shot examples. Creates a learning system that improves the longer an organisation uses it — a key B2B SaaS differentiator.
+Retrieval-Augmented Generation layer that improves Feature 4 SQL accuracy by injecting user-specific successful query examples as dynamic few-shot context. The implementation is additive (static prompt remains), tenant-isolated, and fail-safe (falls back silently to static-only behavior on any retrieval failure).
 
 ### Tech Stack
 | Component | Technology |
@@ -910,25 +910,28 @@ Retrieval-Augmented Generation layer that improves Feature 4's SQL accuracy by d
 | Embedding model | `text-embedding-3-small` (already in use) |
 | Retrieval | pgvector cosine similarity search |
 | Storage | `query_history` table (new) |
+| Config controls | `ENABLE_RAG_RETRIEVAL`, `RAG_RETRIEVAL_LIMIT`, `RAG_SIMILARITY_THRESHOLD`, `RAG_DEDUP_WINDOW_HOURS` |
 | Integration point | `app/query/pipeline.py` (additive changes only) |
 
 ### Features
 
 #### 14.1 Query History Storage
-- After every successful NL query execution, embed the NL query text and store in `query_history`
+- After successful chat query execution with `row_count > 0`, embed the NL query text and store in `query_history`
 - Fields: `nl_query`, `generated_sql`, `embedding (vector 1536)`, `row_count`, `user_id`, `session_id`, `provider`, `model`, `created_at`
-- Tenant-isolated: retrieval scoped to organisation's own query history
-- Called from the chat router after successful execution — never blocks the SSE stream
+- Soft deduplication prevents identical `nl_query` + `user_id` inserts inside a configurable window (`RAG_DEDUP_WINDOW_HOURS`, default 24)
+- Called from the chat SSE flow as a non-blocking background task with an independent write session
 
 #### 14.2 Dynamic Few-Shot Retrieval
-- At the start of `nl_to_sql()`, retrieve top 5 semantically similar past successful queries using pgvector cosine search
-- Inject retrieved examples as dynamic few-shot context in the system prompt alongside static examples
-- Falls back to static-only prompt if no history exists (cold start) or if retrieval fails
+- At the start of `nl_to_sql()`, retrieve top-k semantically similar past successful queries (`RAG_RETRIEVAL_LIMIT`, default 5)
+- Filter retrieved examples by cosine distance threshold (`RAG_SIMILARITY_THRESHOLD`, default 0.4) before prompt injection
+- Inject retrieved examples as dynamic context alongside static examples; static examples are never removed
+- Falls back to static-only prompt on cold start, disabled flag, missing user/db context, or retrieval errors
+- Benchmark endpoint intentionally remains static-only (no RAG retrieval)
 
 #### 14.3 Tenant Isolation
-- Pro-tier feature: Basic tier uses static prompt only
-- Retrieval always filtered by `user_id` or organisation ID — never cross-tenant
-- Config flag: `ENABLE_RAG_RETRIEVAL` (default True for Pro, False for Basic)
+- Retrieval SQL is strictly filtered by `user_id` at the database layer (no Python-side post-filtering)
+- No cross-user retrieval is allowed; query history is private per authenticated user boundary
+- Config flag: `ENABLE_RAG_RETRIEVAL` gates retrieval globally and preserves static-only operation when disabled
 
 ### New Tables
 - **`query_history`** — `query_id`, `nl_query`, `generated_sql`, `embedding (vector 1536)`, `row_count`, `user_id`, `session_id`, `provider`, `model`, `created_at`
@@ -941,12 +944,12 @@ Retrieval-Augmented Generation layer that improves Feature 4's SQL accuracy by d
 - `006_rag_pipeline.py` — `down_revision = "005"`
 
 ### Tasks for Developers
-- [ ] Create query_history table and HNSW index migration
-- [ ] Build rag.py module with store, retrieve, and context-build functions
-- [ ] Add retrieve call at start of nl_to_sql() in pipeline.py
-- [ ] Add store call after successful execution in chat router
-- [ ] Add ENABLE_RAG_RETRIEVAL config setting
-- [ ] Write tests: retrieval returns semantically similar queries, cold start falls back gracefully
+- [x] Create query_history table and HNSW index migration
+- [x] Build rag.py module with store, retrieve, and context-build functions
+- [x] Add retrieve call at start of nl_to_sql() in pipeline.py
+- [x] Add store call after successful execution in chat router
+- [x] Add RAG config settings (`ENABLE_RAG_RETRIEVAL`, limit, threshold, dedup window)
+- [x] Add test coverage for retrieval fallback, benchmark static-only behavior, and non-blocking store scheduling
 
 ---
 

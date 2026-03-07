@@ -335,6 +335,24 @@ JWT-based authentication with role-based access control.
 
 ---
 
+### Feature 14 — RAG Pipeline ✅
+
+Retrieval-Augmented Generation improves NL-to-SQL quality by reusing each user's own successful query history as dynamic few-shot context.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Query history storage | Successful chat queries (`row_count > 0`) are stored in `query_history` with embeddings |
+| Retrieval in pipeline | `nl_to_sql()` retrieves similar user queries and prepends RAG context additively |
+| Fallback safety | Any retrieval/store failure falls back to static behavior without breaking query execution |
+| Tenant isolation | Retrieval is DB-filtered by `user_id`; no cross-user query history access |
+| Benchmark behavior | `POST /api/v1/query/benchmark` remains static-only (no RAG retrieval) |
+
+**Configuration flags:** `ENABLE_RAG_RETRIEVAL`, `RAG_RETRIEVAL_LIMIT`, `RAG_SIMILARITY_THRESHOLD`, `RAG_DEDUP_WINDOW_HOURS`
+
+---
+
 ## API Reference
 
 Full interactive documentation at `http://localhost:8000/docs` (requires `DEBUG=True`).
@@ -412,7 +430,7 @@ Content-Type: application/json
 
 ## Database Schema
 
-Created by Alembic migrations `001` through `005`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
+Created by Alembic migrations `001` through `006`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
 
 ### Core Tables
 
@@ -484,6 +502,13 @@ session_id (UUID PK) · user_identifier · name · created_at · last_active_at 
 message_id (UUID PK) · session_id (FK) · role · content · nl_query · generated_sql
 result_metadata (JSONB) · follow_up_suggestions (JSONB) · error (JSONB) · status · created_at
 ```
+
+**`query_history`**
+```
+query_id (UUID PK) · nl_query · generated_sql · embedding (vector 1536) · row_count
+user_id (FK CASCADE) · session_id (FK SET NULL) · provider · model · created_at
+```
+Indexes: HNSW on `embedding` (`vector_cosine_ops`) · B-tree on `user_id` · B-tree on `created_at`
 
 ### Auth Tables
 
@@ -587,6 +612,15 @@ token_id (UUID PK) · user_id (FK CASCADE) · token_hash · expires_at · used
 | `SEARCH_SIMILARITY_THRESHOLD` | `0.3` | Min cosine similarity to include in results |
 | `FUZZY_MATCH_THRESHOLD` | `0.4` | pg_trgm threshold for region name matching |
 
+### RAG Retrieval (Feature 14)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ENABLE_RAG_RETRIEVAL` | `True` | Master switch for retrieval-augmented prompt context |
+| `RAG_RETRIEVAL_LIMIT` | `5` | Max similar historical queries injected per request |
+| `RAG_SIMILARITY_THRESHOLD` | `0.4` | Max cosine distance allowed for retrieved examples |
+| `RAG_DEDUP_WINDOW_HOURS` | `24` | Soft dedup window for identical successful NL queries per user |
+
 ### Observability
 
 | Variable | Default | Description |
@@ -616,11 +650,12 @@ pytest tests/test_chat_api.py tests/test_suggestions.py -v                      
 pytest tests/test_map_api.py -v                                                                    # Feature 7
 pytest tests/test_export_api.py -v                                                                 # Feature 8
 pytest tests/test_auth_api.py -v                                                                   # Feature 13
+pytest tests/test_rag.py -v                                                                        # Feature 14
 ```
 
 **Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
 
-**Total test count:** 309+ tests across all features. No API keys or Docker required for Features 1, 3, 4 (all mocked).
+**Current backend test run (2026-03-07):** `399 passed, 58 skipped`.
 
 ### Frontend
 
@@ -645,7 +680,8 @@ floatchat/
 │   │       ├── 002_ocean_database.py       # ocean_regions, materialized views, indexes
 │   │       ├── 003_metadata_search.py      # pgvector, embedding tables, HNSW indexes
 │   │       ├── 004_chat_interface.py       # chat_sessions, chat_messages
-│   │       └── 005_auth.py                 # users, password_reset_tokens
+│   │       ├── 005_auth.py                 # users, password_reset_tokens
+│   │       └── 006_rag_pipeline.py         # query_history, HNSW index, readonly grant
 │   ├── app/
 │   │   ├── main.py                         # FastAPI app entry point
 │   │   ├── config.py                       # All environment settings (pydantic-settings)
@@ -679,7 +715,8 @@ floatchat/
 │   │   │   ├── context.py                  # Redis conversation history
 │   │   │   ├── validator.py                # SQL validation (syntax, read-only, whitelist)
 │   │   │   ├── executor.py                 # Safe SQL execution + row estimation
-│   │   │   └── pipeline.py                 # LLM orchestration — all LLM calls live here
+│   │   │   ├── pipeline.py                 # LLM orchestration + RAG retrieval integration
+│   │   │   └── rag.py                      # Query-history store/retrieve/context helpers
 │   │   ├── search/
 │   │   │   ├── embeddings.py               # OpenAI embedding API — only caller
 │   │   │   ├── indexer.py                  # DB record → embedding → pgvector upsert
