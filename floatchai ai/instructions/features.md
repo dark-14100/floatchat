@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1–8, 13, 14, and 15 complete; roadmap features 9–12 are planned
+> **Status:** In Development — Features 1–9, 13, 14, and 15 complete; roadmap features 10–12 are planned
 
 ---
 
@@ -41,7 +41,7 @@
 | 8 — Data Export System | ✅ Complete |
 | 14 — RAG Pipeline | ✅ Complete |
 | 15 — Anomaly Detection | ✅ Complete |
-| 9 — Guided Query Assistant | ⏳ Planned |
+| 9 — Guided Query Assistant | ✅ Complete |
 | 10 — Dataset Management | ⏳ Planned |
 | 11 — API Layer | ⏳ Planned |
 | 12 — System Monitoring | ⏳ Planned |
@@ -664,10 +664,10 @@ Export query results in CSV, NetCDF, and JSON formats. Async export via Celery f
 
 ## 9. Guided Query Assistant
 
-**Status: ⏳ Planned — build after RAG Pipeline**
+**Status: ✅ Complete**
 
 ### Overview
-Interactive query help for new users. Autocomplete, clarification chips, and template gallery. Benefits significantly from RAG being live — autocomplete sources from past successful queries.
+Interactive query help for new users and returning users. Provides a guided template gallery, Fuse.js-powered autocomplete, and a clarification flow for underspecified free-text queries while preserving existing prefill workflows.
 
 ### Tech Stack
 | Component | Technology |
@@ -675,30 +675,33 @@ Interactive query help for new users. Autocomplete, clarification chips, and tem
 | Autocomplete | React + Fuse.js |
 | Clarification logic | LLM with structured output (same multi-provider setup as Feature 4) |
 | Query templates | JSON-defined template library (30+ templates) |
-| UI | Typeahead input component inside ChatInput |
+| UI | SuggestedQueryGallery + AutocompleteInput + ClarificationWidget |
+| Backend APIs | `GET /api/v1/chat/query-history`, `POST /api/v1/clarification/detect` |
 
 ### Features
 
 #### 9.1 Suggested Queries
-- Gallery on empty state, categorized: "Explore Temperature", "Find BGC Floats", "Compare Regions"
-- Personalized based on user's query history after Auth is live
-- Refreshed based on newly ingested datasets
+- Empty-state gallery with category tabs and 35 static templates in `frontend/lib/queryTemplates.json`
+- Optional `For You` tab for authenticated users with at least 5 history entries from `query_history`
+- "Recently Added" badge computed from recent dataset summaries (`/api/v1/search/datasets/summaries`) with silent fallback on API failure
 
 #### 9.2 Autocomplete
-- Sources: query templates + past successful queries from RAG's `query_history` table + oceanographic terms
-- Highlight matched characters; select with Tab or arrow keys
+- Sources: template library + auth-scoped query history (`GET /api/v1/chat/query-history`) + ocean terms dictionary
+- Fuse.js fuzzy matching with source-priority merge (history > templates > terms), match highlighting, and keyboard navigation
 
 #### 9.3 Clarification Prompts
-- Underspecified query detection → chip-based clarifying questions
-- Examples: "show ocean data" → variable chips → region chips → time chips → full query assembled
+- Server-side clarification detection via `POST /api/v1/clarification/detect` using the same provider stack as Feature 4
+- Fail-open behavior on invalid model output, exceptions, or timeouts; query proceeds normally
+- Chip-based refinement widget supports assembled query submission, skip, and dismiss
+- Clarification is bypassed for template clicks, autocomplete selections, and prefill-driven submissions
 
 ### Tasks for Developers
-- [ ] Build query template library JSON (30+ templates)
-- [ ] Build SuggestedQueryGallery component
-- [ ] Build typeahead autocomplete with Fuse.js
-- [ ] Implement clarification detection
-- [ ] Build ClarificationWidget component
-- [ ] Log clarification flows for template improvement
+- [x] Build query template library JSON (30+ templates)
+- [x] Build SuggestedQueryGallery component
+- [x] Build typeahead autocomplete with Fuse.js
+- [x] Implement clarification detection
+- [x] Build ClarificationWidget component
+- [x] Integrate guided flow with prefill-safe bypass behavior
 
 ---
 

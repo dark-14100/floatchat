@@ -40,6 +40,7 @@ interface ChatThreadProps {
   onCancelConfirm: () => void;
   onRetry: (query: string) => void;
   onSuggestionSelect: (query: string) => void;
+  hideEmptyState?: boolean;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ export default function ChatThread({
   onCancelConfirm,
   onRetry,
   onSuggestionSelect,
+  hideEmptyState = false,
 }: ChatThreadProps) {
   const messages = useChatStore((s) => s.messages[sessionId] ?? []);
   const setMessages = useChatStore((s) => s.setMessages);
@@ -167,7 +169,7 @@ export default function ChatThread({
   }, []);
 
   // ── Empty state ────────────────────────────────────────
-  if (messages.length === 0 && !isLoading) {
+  if (!hideEmptyState && messages.length === 0 && !isLoading) {
     return <SuggestionsPanel onSelect={onSuggestionSelect} />;
   }
 

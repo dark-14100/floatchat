@@ -17,6 +17,7 @@ const store = {
   setStreamState: vi.fn(),
   setPendingInterpretation: vi.fn(),
   setResultRows: vi.fn(),
+  messages: {},
   isLoading: false,
   streamState: null,
   pendingInterpretation: null,
@@ -42,10 +43,18 @@ vi.mock("@/components/chat/ChatThread", () => ({
   default: () => <div data-testid="chat-thread" />,
 }));
 
-vi.mock("@/components/chat/ChatInput", () => ({
-  default: React.forwardRef(function MockChatInput() {
+vi.mock("@/components/chat/AutocompleteInput", () => ({
+  default: React.forwardRef(function MockAutocompleteInput() {
     return <div data-testid="chat-input" />;
   }),
+}));
+
+vi.mock("@/components/chat/SuggestedQueryGallery", () => ({
+  default: () => <div data-testid="suggested-query-gallery" />,
+}));
+
+vi.mock("@/components/chat/ClarificationWidget", () => ({
+  default: () => null,
 }));
 
 describe("ChatSessionPage prefill deep-link", () => {

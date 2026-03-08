@@ -13,8 +13,10 @@
  */
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { apiFetch } from "@/lib/api";
 import { useChatStore } from "@/store/chatStore";
+import { useAuthStore } from "@/store/authStore";
 import { createQueryStream, createConfirmStream } from "@/lib/sse";
 import type {
   ChatMessage,
@@ -26,12 +28,29 @@ import type {
   SSEErrorEvent,
 } from "@/types/chat";
 import ChatThread from "@/components/chat/ChatThread";
-import ChatInput, { type ChatInputHandle } from "@/components/chat/ChatInput";
+import AutocompleteInput, {
+  type AutocompleteInputHandle,
+  type SubmitOptions,
+} from "@/components/chat/AutocompleteInput";
+import ClarificationWidget, {
+  type ClarificationQuestion,
+} from "@/components/chat/ClarificationWidget";
+import SuggestedQueryGallery from "@/components/chat/SuggestedQueryGallery";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function uuid(): string {
   return crypto.randomUUID();
+}
+
+function normalizeQueryKey(query: string): string {
+  return query.trim().toLowerCase();
+}
+
+interface ClarificationDetectResponse {
+  is_underspecified: boolean;
+  missing_dimensions: string[];
+  clarification_questions: ClarificationQuestion[];
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -40,6 +59,11 @@ export default function ChatSessionPage() {
   const params = useParams<{ session_id: string }>();
   const searchParams = useSearchParams();
   const sessionId = params.session_id;
+  const currentUser = useAuthStore((s) => s.currentUser);
+  const messages = useChatStore((s) => s.messages[sessionId] ?? []);
+  const userId = currentUser?.user_id;
+  const prefillValue = searchParams.get("prefill")?.trim() ?? "";
+  const hasPrefill = prefillValue.length > 0;
 
   // Store selectors
   const setActiveSession = useChatStore((s) => s.setActiveSession);
@@ -57,8 +81,15 @@ export default function ChatSessionPage() {
 
   // Refs
   const abortRef = useRef<AbortController | null>(null);
-  const inputRef = useRef<ChatInputHandle>(null);
+  const inputRef = useRef<AutocompleteInputHandle>(null);
   const processedPrefillRef = useRef<string | null>(null);
+  const skippedClarificationQueriesRef = useRef<Set<string>>(new Set());
+
+  const [clarificationVisible, setClarificationVisible] = useState(false);
+  const [clarificationLoading, setClarificationLoading] = useState(false);
+  const [clarificationOriginalQuery, setClarificationOriginalQuery] = useState("");
+  const [missingDimensions, setMissingDimensions] = useState<string[]>([]);
+  const [clarificationQuestions, setClarificationQuestions] = useState<ClarificationQuestion[]>([]);
 
   // Track the current streaming result data so we can build the final message
   const streamDataRef = useRef<{
@@ -85,6 +116,15 @@ export default function ChatSessionPage() {
       abortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    skippedClarificationQueriesRef.current = new Set();
+    setClarificationVisible(false);
+    setClarificationLoading(false);
+    setClarificationOriginalQuery("");
+    setMissingDimensions([]);
+    setClarificationQuestions([]);
+  }, [sessionId]);
 
   // ── SSE event handler ──────────────────────────────────────────────────
 
@@ -223,6 +263,12 @@ export default function ChatSessionPage() {
       // Abort any existing stream
       abortRef.current?.abort();
 
+      setClarificationVisible(false);
+      setClarificationLoading(false);
+      setClarificationOriginalQuery("");
+      setMissingDimensions([]);
+      setClarificationQuestions([]);
+
       // Add user message
       const userMsg: ChatMessage = {
         message_id: uuid(),
@@ -304,22 +350,88 @@ export default function ChatSessionPage() {
     ],
   );
 
+  const detectClarification = useCallback(
+    async (query: string): Promise<ClarificationDetectResponse | null> => {
+      const detectionRequest = apiFetch<ClarificationDetectResponse>("/clarification/detect", {
+        method: "POST",
+        body: JSON.stringify({ query }),
+      });
+
+      const timeoutRequest = new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), 3000);
+      });
+
+      try {
+        const result = (await Promise.race([
+          detectionRequest,
+          timeoutRequest,
+        ])) as ClarificationDetectResponse | null;
+        return result;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const handleInputSubmit = useCallback(
+    async (query: string, options?: SubmitOptions) => {
+      const trimmed = query.trim();
+      if (!trimmed) return;
+
+      const normalized = normalizeQueryKey(trimmed);
+      const bypassClarification =
+        options?.bypassClarification === true ||
+        hasPrefill ||
+        skippedClarificationQueriesRef.current.has(normalized);
+
+      if (bypassClarification) {
+        submitQuery(trimmed);
+        return;
+      }
+
+      setClarificationVisible(true);
+      setClarificationLoading(true);
+      setClarificationOriginalQuery(trimmed);
+      setMissingDimensions([]);
+      setClarificationQuestions([]);
+
+      const result = await detectClarification(trimmed);
+      if (
+        !result ||
+        !result.is_underspecified ||
+        result.missing_dimensions.length === 0 ||
+        result.clarification_questions.length === 0
+      ) {
+        setClarificationVisible(false);
+        setClarificationLoading(false);
+        setClarificationOriginalQuery("");
+        submitQuery(trimmed);
+        return;
+      }
+
+      setClarificationLoading(false);
+      setMissingDimensions(result.missing_dimensions);
+      setClarificationQuestions(result.clarification_questions);
+    },
+    [detectClarification, hasPrefill, submitQuery],
+  );
+
   // ── URL prefill auto-submit (one-time per session/value) ─────────────
 
   useEffect(() => {
-    const prefill = searchParams.get("prefill")?.trim();
-    if (!prefill) {
+    if (!prefillValue) {
       return;
     }
 
-    const prefillKey = `${sessionId}:${prefill}`;
+    const prefillKey = `${sessionId}:${prefillValue}`;
     if (processedPrefillRef.current === prefillKey) {
       return;
     }
 
     processedPrefillRef.current = prefillKey;
-    submitQuery(prefill);
-  }, [sessionId, searchParams, submitQuery]);
+    submitQuery(prefillValue);
+  }, [sessionId, prefillValue, submitQuery]);
 
   // ── Confirm query ──────────────────────────────────────────────────────
 
@@ -432,6 +544,47 @@ export default function ChatSessionPage() {
     [submitQuery],
   );
 
+  const handleClarificationSkip = useCallback(() => {
+    const original = clarificationOriginalQuery.trim();
+    if (original) {
+      skippedClarificationQueriesRef.current.add(normalizeQueryKey(original));
+      submitQuery(original);
+    }
+    setClarificationVisible(false);
+    setClarificationLoading(false);
+    setClarificationOriginalQuery("");
+    setMissingDimensions([]);
+    setClarificationQuestions([]);
+  }, [clarificationOriginalQuery, submitQuery]);
+
+  const handleClarificationDismiss = useCallback(() => {
+    setClarificationVisible(false);
+    setClarificationLoading(false);
+    setClarificationOriginalQuery("");
+    setMissingDimensions([]);
+    setClarificationQuestions([]);
+  }, []);
+
+  const handleAssembledQuery = useCallback(
+    (assembledQuery: string) => {
+      const assembled = assembledQuery.trim();
+      if (!assembled) {
+        handleClarificationDismiss();
+        return;
+      }
+
+      setClarificationVisible(false);
+      setClarificationLoading(false);
+      setClarificationOriginalQuery("");
+      setMissingDimensions([]);
+      setClarificationQuestions([]);
+      submitQuery(assembled);
+    },
+    [handleClarificationDismiss, submitQuery],
+  );
+
+  const showGallery = messages.length === 0 && !isLoading && !hasPrefill;
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
@@ -445,23 +598,52 @@ export default function ChatSessionPage() {
         {isLoading && streamState === "executing" && "Running query..."}
       </div>
 
-      {/* Chat thread */}
-      <ChatThread
-        sessionId={sessionId}
-        streamState={streamState}
-        pendingInterpretation={pendingInterpretation}
-        onFollowUpSelect={handleFollowUpSelect}
-        onConfirm={handleConfirm}
-        onCancelConfirm={handleCancelConfirm}
-        onRetry={handleRetry}
-        onSuggestionSelect={handleSuggestionSelect}
+      {/* Chat thread / empty state gallery */}
+      {showGallery ? (
+        <SuggestedQueryGallery
+          visible={showGallery}
+          userId={userId}
+          onQuerySelect={(query) => {
+            void handleInputSubmit(query, {
+              bypassClarification: true,
+              source: "template",
+            });
+          }}
+        />
+      ) : (
+        <ChatThread
+          sessionId={sessionId}
+          streamState={streamState}
+          pendingInterpretation={pendingInterpretation}
+          onFollowUpSelect={handleFollowUpSelect}
+          onConfirm={handleConfirm}
+          onCancelConfirm={handleCancelConfirm}
+          onRetry={handleRetry}
+          onSuggestionSelect={handleSuggestionSelect}
+          hideEmptyState
+        />
+      )}
+
+      <ClarificationWidget
+        visible={clarificationVisible}
+        isLoading={clarificationLoading}
+        originalQuery={clarificationOriginalQuery}
+        missingDimensions={missingDimensions}
+        clarificationQuestions={clarificationQuestions}
+        onAssembledQuery={handleAssembledQuery}
+        onSkip={handleClarificationSkip}
+        onDismiss={handleClarificationDismiss}
       />
 
       {/* Chat input */}
-      <ChatInput
+      <AutocompleteInput
         ref={inputRef}
-        onSubmit={submitQuery}
         isLoading={isLoading}
+        disabled={clarificationLoading}
+        userId={userId}
+        onSubmit={(query, options) => {
+          void handleInputSubmit(query, options);
+        }}
       />
     </div>
   );

@@ -233,6 +233,7 @@ SSE-streamed chat with session memory, follow-up suggestions, and inline result 
 |---|---|---|
 | POST | `/sessions` | Create a new session |
 | GET | `/sessions` | List user's sessions |
+| GET | `/query-history` | Recent successful NL queries for autocomplete/personalization |
 | GET | `/sessions/{id}` | Session details |
 | PATCH | `/sessions/{id}` | Rename session |
 | DELETE | `/sessions/{id}` | Soft delete |
@@ -304,6 +305,38 @@ One-click export of any chat query result. Small exports stream directly; large 
   "expires_at": "2026-03-06T11:00:00Z"
 }
 ```
+
+---
+
+### Feature 9 — Guided Query Assistant ✅
+
+Interactive query guidance layer for faster first-query success and better query specificity, implemented additively on top of the existing chat flow.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Suggested query gallery | Category tabs with static template cards (`queryTemplates.json`) shown only on chat empty state |
+| Personalized tab | Optional `For You` tab generated from authenticated user's recent query history |
+| Recently added badge | Template badge derived from recent dataset summaries (`/api/v1/search/datasets/summaries`) with silent fallback |
+| Autocomplete | Fuse.js-powered multi-source typeahead (history + templates + ocean terms) with keyboard navigation |
+| Clarification detection | Server-side detection endpoint with fail-open behavior and 3s frontend timeout fallback |
+| Clarification widget | Chip-based refinement flow with skip/dismiss and assembled-query submission |
+| Prefill safety | `prefill` deep-link flow bypasses gallery and clarification, preserving Feature 15 investigation flow |
+
+**Feature 9 endpoints:**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/chat/query-history` | Auth-scoped recent successful NL queries (max 200) for personalization/autocomplete |
+| POST | `/api/v1/clarification/detect` | Server-side underspecified query detection with fail-open response on errors/timeouts |
+
+**Frontend Feature 9 assets:**
+- `frontend/components/chat/SuggestedQueryGallery.tsx`
+- `frontend/components/chat/AutocompleteInput.tsx`
+- `frontend/components/chat/ClarificationWidget.tsx`
+- `frontend/lib/queryTemplates.json`
+- `frontend/lib/oceanTerms.json`
 
 ---
 
@@ -707,11 +740,12 @@ pytest tests/test_export_api.py -v                                              
 pytest tests/test_auth_api.py -v                                                                   # Feature 13
 pytest tests/test_rag.py -v                                                                        # Feature 14
 pytest tests/test_anomaly_detectors.py tests/test_anomaly_tasks.py tests/test_anomaly_api.py -v   # Feature 15
+pytest tests/test_clarification.py tests/test_query_history.py -v                                  # Feature 9
 ```
 
 **Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
 
-**Current backend test run (2026-03-08):** `418 passed, 58 skipped`.
+**Current backend test status (2026-03-08):** targeted Feature 9 suite `9 passed`; previous full-suite run `427 passed, 58 skipped`.
 
 ### Frontend
 
@@ -748,6 +782,7 @@ floatchat/
 │   │   │   ├── search.py                   # Semantic search endpoints
 │   │   │   ├── query.py                    # NL query and benchmark endpoints
 │   │   │   ├── chat.py                     # Chat session and SSE stream endpoints
+│   │   │   ├── clarification.py            # Clarification detection endpoint (Feature 9)
 │   │   │   ├── map.py                      # Geospatial exploration endpoints
 │   │   │   ├── export.py                   # Export trigger and status endpoints
 │   │   │   ├── auth.py                     # Authentication endpoints
@@ -814,7 +849,7 @@ floatchat/
     │   ├── login/ signup/                  # Auth pages
     │   └── forgot-password/ reset-password/
     ├── components/
-    │   ├── chat/                           # ChatMessage, ChatInput, ResultTable, ExportButton
+    │   ├── chat/                           # ChatMessage, AutocompleteInput, ClarificationWidget, SuggestedQueryGallery
     │   ├── visualization/                  # Chart and map components
     │   ├── map/                            # Geospatial map components
     │   ├── anomaly/                        # AnomalyFeedList, AnomalyDetailPanel, AnomalyComparisonChart
@@ -822,6 +857,8 @@ floatchat/
     │   └── layout/                         # SessionSidebar, LayoutShell
     ├── lib/
     │   ├── api.ts                          # Auth-aware API client
+    │   ├── queryTemplates.json             # Feature 9 template library
+    │   ├── oceanTerms.json                 # Feature 9 autocomplete term dictionary
     │   ├── mapQueries.ts                   # Map endpoint client
     │   ├── exportQueries.ts                # Export endpoint client
     │   ├── anomalyQueries.ts               # Anomaly endpoint client
@@ -897,3 +934,4 @@ floatchat/
 | v1.4 | Feature 13: Authentication and user management |
 | v1.5 | Feature 14: RAG retrieval-augmented NL-to-SQL |
 | v1.6 | Feature 15: Anomaly detection and review workflows |
+| v1.7 | Feature 9: Guided query assistant (gallery, autocomplete, clarification) |

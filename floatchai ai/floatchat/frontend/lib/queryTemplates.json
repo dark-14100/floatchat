@@ -1,0 +1,319 @@
+{
+  "templates": [
+    {
+      "id": "temp_surface_north_atlantic_anomalies",
+      "category": "Temperature",
+      "label": "Surface Temperature Anomalies - North Atlantic",
+      "query": "Show surface temperature anomalies in the North Atlantic this year.",
+      "description": "Highlights unusual near-surface warming and cooling patterns in the North Atlantic for the current year.",
+      "variables": ["temperature"],
+      "requiresAuth": false
+    },
+    {
+      "id": "temp_profiles_indian_depth_500",
+      "category": "Temperature",
+      "label": "Temperature Profiles >500m - Indian Ocean",
+      "query": "Show temperature profiles deeper than 500m in the Indian Ocean.",
+      "description": "Returns deep-water temperature measurements for profiles below 500 meters in the Indian Ocean.",
+      "variables": ["temperature", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "temp_lifetime_trend_long_running_floats",
+      "category": "Temperature",
+      "label": "Lifetime Temperature Trends - Long Running Floats",
+      "query": "Show temperature trends over time for floats active for more than 5 years.",
+      "description": "Tracks how temperature observations evolve across long-duration float missions.",
+      "variables": ["temperature", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "temp_seasonal_arabian_sea_monthly",
+      "category": "Temperature",
+      "label": "Seasonal Temperature - Arabian Sea",
+      "query": "Show monthly seasonal temperature changes in the Arabian Sea.",
+      "description": "Summarizes month-by-month seasonal temperature behavior in the Arabian Sea.",
+      "variables": ["temperature", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "temp_warmest_region_last_90_days",
+      "category": "Temperature",
+      "label": "Warmest Region - Last 90 Days",
+      "query": "Which ocean region had the highest average surface temperature in the last 90 days?",
+      "description": "Compares recent surface temperatures across ocean regions and identifies the warmest one.",
+      "variables": ["temperature"],
+      "requiresAuth": false
+    },
+    {
+      "id": "sal_surface_mediterranean_year",
+      "category": "Salinity",
+      "label": "Surface Salinity - Mediterranean",
+      "query": "Show surface salinity in the Mediterranean Sea this year.",
+      "description": "Returns near-surface salinity measurements from the Mediterranean for the current year.",
+      "variables": ["salinity"],
+      "requiresAuth": false
+    },
+    {
+      "id": "sal_thermocline_pacific",
+      "category": "Salinity",
+      "label": "Thermocline Salinity - Pacific",
+      "query": "Show salinity at thermocline depth in the Pacific Ocean.",
+      "description": "Focuses on salinity conditions around thermocline depths in Pacific profiles.",
+      "variables": ["salinity", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "salinity_above_38_any_region",
+      "category": "Salinity",
+      "label": "High Salinity Events >38 PSU",
+      "query": "Which floats recorded salinity above 38 PSU in any region?",
+      "description": "Finds floats and profiles with very high salinity readings regardless of basin.",
+      "variables": ["salinity"],
+      "requiresAuth": false
+    },
+    {
+      "id": "salinity_depth_bgc_southern",
+      "category": "Salinity",
+      "label": "Salinity vs Depth - BGC Floats (Southern Ocean)",
+      "query": "Show salinity versus depth profiles for BGC floats in the Southern Ocean.",
+      "description": "Displays salinity-depth structure from biogeochemical floats in the Southern Ocean.",
+      "variables": ["salinity", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "bgc_active_atlantic",
+      "category": "BGC Floats",
+      "label": "Active BGC Floats - Atlantic",
+      "query": "Show all BGC floats currently active in the Atlantic Ocean.",
+      "description": "Lists active biogeochemical floats operating in Atlantic waters.",
+      "variables": ["float_type"],
+      "requiresAuth": false
+    },
+    {
+      "id": "bgc_doxy_below_200m",
+      "category": "BGC Floats",
+      "label": "Dissolved Oxygen Below 200m",
+      "query": "Show dissolved oxygen measurements below 200m depth.",
+      "description": "Retrieves deeper dissolved oxygen observations from ARGO profiles.",
+      "variables": ["dissolved_oxygen", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "bgc_chla_north_pacific_spring",
+      "category": "BGC Floats",
+      "label": "Chlorophyll - North Pacific Spring",
+      "query": "Show chlorophyll concentration in the North Pacific spring bloom region.",
+      "description": "Examines chlorophyll patterns during seasonal bloom conditions in the North Pacific.",
+      "variables": ["chlorophyll"],
+      "requiresAuth": false
+    },
+    {
+      "id": "bgc_nitrate_peru_upwelling",
+      "category": "BGC Floats",
+      "label": "Nitrate - Peru Upwelling Zone",
+      "query": "Show nitrate levels in upwelling zones off the coast of Peru.",
+      "description": "Targets nitrate-rich waters associated with Peru upwelling dynamics.",
+      "variables": ["nitrate"],
+      "requiresAuth": false
+    },
+    {
+      "id": "compare_surface_temp_arabian_bengal_month",
+      "category": "Regional Comparison",
+      "label": "Arabian Sea vs Bay of Bengal Temperature",
+      "query": "Compare surface temperature between the Arabian Sea and Bay of Bengal this month.",
+      "description": "Contrasts recent surface temperature conditions between two nearby basins.",
+      "variables": ["temperature"],
+      "requiresAuth": false
+    },
+    {
+      "id": "compare_salinity_northatl_northpac_100m",
+      "category": "Regional Comparison",
+      "label": "North Atlantic vs North Pacific Salinity at 100m",
+      "query": "Compare salinity at 100m depth between the North Atlantic and North Pacific.",
+      "description": "Measures mid-upper ocean salinity differences between major northern basins.",
+      "variables": ["salinity", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "compare_highest_avg_temp_region_year",
+      "category": "Regional Comparison",
+      "label": "Highest Average Temperature Region",
+      "query": "Which ocean region has the highest average temperature this year?",
+      "description": "Ranks ocean regions by annual mean temperature.",
+      "variables": ["temperature"],
+      "requiresAuth": false
+    },
+    {
+      "id": "compare_float_density_southern_basins",
+      "category": "Regional Comparison",
+      "label": "Float Density in Southern Basins",
+      "query": "Compare float density across southern hemisphere ocean basins.",
+      "description": "Compares distribution and concentration of floats across southern basins.",
+      "variables": ["float_count"],
+      "requiresAuth": false
+    },
+    {
+      "id": "timeseries_monthly_temp_southern_2y",
+      "category": "Time Series",
+      "label": "Monthly Temperature - Southern Ocean (2 Years)",
+      "query": "Show monthly average temperature in the Southern Ocean over the last 2 years.",
+      "description": "Builds a monthly temperature timeline for recent Southern Ocean conditions.",
+      "variables": ["temperature", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "timeseries_doxy_north_pacific_5y",
+      "category": "Time Series",
+      "label": "Dissolved Oxygen Change - North Pacific",
+      "query": "How has dissolved oxygen changed in the North Pacific over the last 5 years?",
+      "description": "Shows long-term dissolved oxygen trends in North Pacific profiles.",
+      "variables": ["dissolved_oxygen", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "timeseries_seasonal_salinity_arctic_decade",
+      "category": "Time Series",
+      "label": "Seasonal Salinity Cycle - Arctic",
+      "query": "Show the seasonal cycle of salinity in the Arctic Ocean over the past decade.",
+      "description": "Reveals repeating salinity seasonality across a ten-year Arctic window.",
+      "variables": ["salinity", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "timeseries_chla_arabian_monsoon",
+      "category": "Time Series",
+      "label": "Chlorophyll During Monsoon - Arabian Sea",
+      "query": "Show chlorophyll time series in the Arabian Sea during monsoon months over the last 5 years.",
+      "description": "Tracks chlorophyll variability during monsoon seasons in the Arabian Sea.",
+      "variables": ["chlorophyll", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "track_trajectories_long_running_indian",
+      "category": "Float Tracking",
+      "label": "Trajectories of Long-Running Floats - Indian Ocean",
+      "query": "Show trajectories of floats that were active for more than 3 years in the Indian Ocean.",
+      "description": "Maps movement paths for long-duration float missions in the Indian Ocean.",
+      "variables": ["latitude", "longitude", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "track_recent_deployments_positions_30d",
+      "category": "Float Tracking",
+      "label": "Recent Deployments and Current Positions",
+      "query": "Show floats deployed in the last 30 days and their latest known positions.",
+      "description": "Lists newly deployed floats and where they are currently located.",
+      "variables": ["deployment_date", "latitude", "longitude"],
+      "requiresAuth": false
+    },
+    {
+      "id": "track_westward_moving_tropical_pacific",
+      "category": "Float Tracking",
+      "label": "Westward Moving Floats - Tropical Pacific",
+      "query": "Show trajectories of floats in the tropical Pacific that moved predominantly westward in the last year.",
+      "description": "Identifies float paths with strong westward displacement.",
+      "variables": ["latitude", "longitude", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "track_high_cycle_frequency_top10",
+      "category": "Float Tracking",
+      "label": "Top 10 High-Cycle Floats",
+      "query": "Show the top 10 floats with the highest cycle frequency in the past 12 months.",
+      "description": "Finds floats producing the most frequent recent profile cycles.",
+      "variables": ["cycle_number", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "depth_temp_gradient_indian_0_2000",
+      "category": "Depth Analysis",
+      "label": "Temperature Gradient 0-2000m - Indian Ocean",
+      "query": "Show the temperature gradient from surface to 2000m in the Indian Ocean.",
+      "description": "Examines vertical temperature structure from upper to deep waters.",
+      "variables": ["temperature", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "depth_oxygen_minimum_arabian",
+      "category": "Depth Analysis",
+      "label": "Oxygen Minimum Zone Depth - Arabian Sea",
+      "query": "Estimate oxygen minimum zone depth in the Arabian Sea.",
+      "description": "Detects depth ranges where dissolved oxygen reaches local minima.",
+      "variables": ["dissolved_oxygen", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "depth_mixed_layer_recent_profiles",
+      "category": "Depth Analysis",
+      "label": "Mixed Layer Depth - Recent Profiles",
+      "query": "Estimate mixed layer depth from recent profiles across all regions.",
+      "description": "Calculates mixed layer depth indicators from the most recent profile set.",
+      "variables": ["temperature", "salinity", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "depth_deepest_profiles_atlantic",
+      "category": "Depth Analysis",
+      "label": "Deepest Available Atlantic Profiles",
+      "query": "Show the deepest profiles available in the Atlantic Ocean.",
+      "description": "Returns profiles that reached the greatest depths in Atlantic basins.",
+      "variables": ["depth", "pressure"],
+      "requiresAuth": false
+    },
+    {
+      "id": "depth_ph_below_1000_southern",
+      "category": "Depth Analysis",
+      "label": "pH Below 1000m - Southern Ocean",
+      "query": "Show pH measurements below 1000m depth in the Southern Ocean.",
+      "description": "Focuses on deep-ocean pH conditions in the Southern Ocean.",
+      "variables": ["ph", "depth"],
+      "requiresAuth": false
+    },
+    {
+      "id": "anomaly_high_severity_last_7d",
+      "category": "Anomalies",
+      "label": "High Severity Anomalies - Last 7 Days",
+      "query": "Show all high severity records from the anomalies table in the last 7 days.",
+      "description": "Returns recently detected high-severity anomaly events for review.",
+      "variables": ["anomaly", "severity", "detected_at"],
+      "requiresAuth": false
+    },
+    {
+      "id": "anomaly_unreviewed_temperature_month",
+      "category": "Anomalies",
+      "label": "Unreviewed Temperature Anomalies - This Month",
+      "query": "Which floats have unreviewed temperature entries in the anomalies table this month?",
+      "description": "Lists floats linked to unresolved temperature anomaly findings.",
+      "variables": ["anomaly", "temperature", "is_reviewed"],
+      "requiresAuth": false
+    },
+    {
+      "id": "anomaly_arabian_last_30d",
+      "category": "Anomalies",
+      "label": "Arabian Sea Anomalies - Last 30 Days",
+      "query": "Show anomalies table records detected in the Arabian Sea in the last 30 days.",
+      "description": "Filters anomaly detections to the Arabian Sea over the recent month.",
+      "variables": ["anomaly", "region", "detected_at"],
+      "requiresAuth": false
+    },
+    {
+      "id": "anomaly_compare_atlantic_pacific_year",
+      "category": "Anomalies",
+      "label": "Atlantic vs Pacific Anomaly Frequency",
+      "query": "Compare anomaly frequency between the Atlantic and Pacific using the anomalies table this year.",
+      "description": "Compares regional anomaly counts across two major ocean basins.",
+      "variables": ["anomaly", "region", "time"],
+      "requiresAuth": false
+    },
+    {
+      "id": "anomaly_repeat_offenders_quarter",
+      "category": "Anomalies",
+      "label": "Top Repeating Anomaly Floats - Quarter",
+      "query": "From the anomalies table, show the top 10 floats with repeated anomalies in the last quarter.",
+      "description": "Identifies floats repeatedly flagged by anomaly detectors over the last quarter.",
+      "variables": ["anomaly", "float_id", "detected_at"],
+      "requiresAuth": false
+    }
+  ]
+}

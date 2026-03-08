@@ -4,6 +4,7 @@ FloatChat Chat Interface — API Router
 Endpoints:
   POST   /chat/sessions                              — Create a new chat session
   GET    /chat/sessions                              — List sessions for the current user
+    GET    /chat/query-history                         — Recent successful NL queries for autocomplete
   GET    /chat/sessions/{session_id}                 — Get session details
   PATCH  /chat/sessions/{session_id}                 — Rename a session
   DELETE /chat/sessions/{session_id}                 — Soft-delete a session
@@ -32,7 +33,7 @@ from app.auth.dependencies import get_current_user
 from app.chat.follow_ups import generate_follow_up_suggestions
 from app.chat.suggestions import generate_load_time_suggestions
 from app.config import get_settings
-from app.db.models import ChatSession, ChatMessage, User
+from app.db.models import ChatSession, ChatMessage, QueryHistory, User
 from app.db.session import SessionLocal, get_db, get_readonly_db
 from app.query.context import append_context, get_context
 from app.query.executor import estimate_rows, execute_sql
@@ -397,6 +398,11 @@ class SuggestionItem(BaseModel):
 
 class SuggestionsResponse(BaseModel):
     suggestions: list[SuggestionItem]
+
+
+class QueryHistoryItem(BaseModel):
+    nl_query: str
+    created_at: str
 
 
 # ── POST /chat/sessions/{session_id}/query (SSE streaming) ─────────────────
@@ -850,6 +856,35 @@ def get_suggestions(
     return SuggestionsResponse(
         suggestions=[SuggestionItem(**s) for s in suggestions]
     )
+
+
+# ── GET /chat/query-history ───────────────────────────────────────────────
+
+@router.get("/query-history", response_model=list[QueryHistoryItem])
+def get_query_history(
+    limit: int = Query(default=200, ge=1, le=200, description="Maximum number of entries to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return recent successful query history for the authenticated user.
+
+    Used by Feature 9 autocomplete and personalized "For You" suggestions.
+    """
+    rows = db.execute(
+        select(QueryHistory.nl_query, QueryHistory.created_at)
+        .where(QueryHistory.user_id == current_user.user_id)
+        .order_by(QueryHistory.created_at.desc())
+        .limit(limit)
+    ).all()
+
+    return [
+        QueryHistoryItem(
+            nl_query=row.nl_query,
+            created_at=row.created_at.isoformat() if row.created_at else "",
+        )
+        for row in rows
+    ]
 
 
 # ── SSE helpers ─────────────────────────────────────────────────────────────
