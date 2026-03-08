@@ -149,6 +149,82 @@ def auth_headers(auth_token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {auth_token}"}
 
 
+@pytest.fixture()
+def admin_user(db_session: Session) -> User:
+    """Create an active admin user for Feature 10 admin API tests."""
+    user = User(
+        user_id=uuid.uuid4(),
+        email="feature10-admin@example.com",
+        hashed_password="test-hash",
+        name="Feature 10 Admin",
+        role="admin",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
+def researcher_user(db_session: Session) -> User:
+    """Create an active non-admin user for Feature 10 403 checks."""
+    user = User(
+        user_id=uuid.uuid4(),
+        email="feature10-researcher@example.com",
+        hashed_password="test-hash",
+        name="Feature 10 Researcher",
+        role="researcher",
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+@pytest.fixture()
+def admin_access_token(admin_user: User) -> str:
+    """Generate Feature 13-compliant admin access token for admin router tests."""
+    from app.auth.jwt import create_token
+
+    return create_token(
+        {
+            "sub": str(admin_user.user_id),
+            "email": admin_user.email,
+            "role": admin_user.role,
+        },
+        token_type="access",
+    )
+
+
+@pytest.fixture()
+def researcher_access_token(researcher_user: User) -> str:
+    """Generate Feature 13-compliant non-admin access token for 403 checks."""
+    from app.auth.jwt import create_token
+
+    return create_token(
+        {
+            "sub": str(researcher_user.user_id),
+            "email": researcher_user.email,
+            "role": researcher_user.role,
+        },
+        token_type="access",
+    )
+
+
+@pytest.fixture()
+def admin_headers(admin_access_token: str) -> dict[str, str]:
+    """Authorization header for Feature 10 admin endpoint tests."""
+    return {"Authorization": f"Bearer {admin_access_token}"}
+
+
+@pytest.fixture()
+def researcher_headers(researcher_access_token: str) -> dict[str, str]:
+    """Authorization header for Feature 10 non-admin endpoint tests."""
+    return {"Authorization": f"Bearer {researcher_access_token}"}
+
+
 # =============================================================================
 # FastAPI TestClient with DB & auth overrides
 # =============================================================================

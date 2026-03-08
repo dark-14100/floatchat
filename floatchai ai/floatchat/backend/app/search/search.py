@@ -138,6 +138,7 @@ def search_datasets(
         .join(Dataset, DatasetEmbedding.dataset_id == Dataset.dataset_id)
         .where(DatasetEmbedding.status == "indexed")
         .where(Dataset.is_active == True)  # noqa: E712
+        .where(Dataset.deleted_at.is_(None))
         .order_by(cosine_distance.asc())
         .limit(candidate_limit)
     )

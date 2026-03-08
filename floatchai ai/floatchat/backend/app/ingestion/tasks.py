@@ -29,10 +29,12 @@ from pathlib import Path
 from typing import Optional
 
 import structlog
+from sqlalchemy import select
 
 from app.celery_app import celery
 from app.config import settings
 from app.db.session import SessionLocal
+from app.db.models import Dataset
 from app.ingestion.cleaner import clean_measurements, clean_parse_result
 from app.ingestion.metadata import update_dataset_metadata
 from app.ingestion.parser import (
@@ -45,9 +47,40 @@ from app.ingestion.writer import (
     write_dataset,
     write_parse_result,
 )
+from app.notifications.sender import notify
 from app.storage.s3 import upload_file_to_s3
 
 logger = structlog.get_logger(__name__)
+
+
+def _notify_ingestion_event(
+    db,
+    *,
+    dataset_id: int,
+    event: str,
+    profiles_ingested: int = 0,
+    error_message: Optional[str] = None,
+) -> None:
+    """Best-effort notification dispatch for ingestion outcomes."""
+    try:
+        dataset_name = db.execute(
+            select(Dataset.name).where(Dataset.dataset_id == dataset_id)
+        ).scalar_one_or_none() or f"dataset_{dataset_id}"
+
+        context = {
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "profiles_ingested": profiles_ingested,
+            "error_message": error_message,
+        }
+        notify(event, context)
+    except Exception as exc:
+        logger.warning(
+            "ingestion_notification_dispatch_failed",
+            dataset_id=dataset_id,
+            event=event,
+            error=str(exc),
+        )
 
 
 @celery.task(
@@ -118,6 +151,12 @@ def ingest_file_task(
                 errors=[{"stage": "s3_upload", "error": str(e)}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=f"S3 upload failed: {str(e)}",
+            )
             return {"success": False, "error": f"S3 upload failed: {str(e)}"}
 
         update_job_status(db, job_id, status="running", progress_pct=10)
@@ -138,6 +177,12 @@ def ingest_file_task(
                 errors=[{"stage": "validation", "error": validation_error}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=f"Validation failed: {validation_error}",
+            )
             return {"success": False, "error": validation_error}
 
         update_job_status(db, job_id, status="running", progress_pct=15)
@@ -171,6 +216,12 @@ def ingest_file_task(
                 errors=[{"stage": "parsing", "error": error_msg}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=error_msg,
+            )
             return {"success": False, "error": error_msg}
 
         profiles_total = len(successful_parses)
@@ -254,6 +305,12 @@ def ingest_file_task(
                 errors=[{"stage": "db_write", "error": str(e)}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=error_msg,
+            )
             return {"success": False, "error": error_msg}
 
         update_job_status(
@@ -297,6 +354,12 @@ def ingest_file_task(
             errors=errors_list,
         )
         db.commit()
+        _notify_ingestion_event(
+            db,
+            dataset_id=dataset_id,
+            event="ingestion_completed",
+            profiles_ingested=profiles_ingested,
+        )
 
         # =============================================================
         # Step 9: Enqueue post-ingestion search indexing (fire-and-forget)
@@ -341,6 +404,12 @@ def ingest_file_task(
                 errors=[{"stage": "unexpected", "error": str(e)}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=error_msg,
+            )
         except Exception:
             log.error("failed_to_update_job_status_after_error")
 
@@ -410,6 +479,12 @@ def ingest_zip_task(
                     errors=[{"stage": "zip_extract", "error": str(e)}],
                 )
                 db.commit()
+                _notify_ingestion_event(
+                    db,
+                    dataset_id=dataset_id,
+                    event="ingestion_failed",
+                    error_message=error_msg,
+                )
                 return {"success": False, "error": error_msg}
 
             # Find all NetCDF files in extracted contents
@@ -429,6 +504,12 @@ def ingest_zip_task(
                     errors=[{"stage": "zip_scan", "error": error_msg}],
                 )
                 db.commit()
+                _notify_ingestion_event(
+                    db,
+                    dataset_id=dataset_id,
+                    event="ingestion_failed",
+                    error_message=error_msg,
+                )
                 return {"success": False, "error": error_msg}
 
             log.info("zip_extracted", file_count=len(nc_files))
@@ -502,6 +583,12 @@ def ingest_zip_task(
                     errors=errors,
                 )
                 db.commit()
+                _notify_ingestion_event(
+                    db,
+                    dataset_id=dataset_id,
+                    event="ingestion_failed",
+                    error_message="No valid NetCDF files in ZIP",
+                )
                 return {
                     "success": False,
                     "error": "No valid NetCDF files in ZIP",
@@ -516,6 +603,12 @@ def ingest_zip_task(
                     errors=errors if errors else None,
                 )
                 db.commit()
+                _notify_ingestion_event(
+                    db,
+                    dataset_id=dataset_id,
+                    event="ingestion_completed",
+                    profiles_ingested=dispatched,
+                )
 
             summary = {
                 "success": True,
@@ -541,6 +634,12 @@ def ingest_zip_task(
                 errors=[{"stage": "unexpected", "error": str(e)}],
             )
             db.commit()
+            _notify_ingestion_event(
+                db,
+                dataset_id=dataset_id,
+                event="ingestion_failed",
+                error_message=str(e),
+            )
         except Exception:
             pass
 

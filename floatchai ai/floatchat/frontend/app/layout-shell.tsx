@@ -41,6 +41,7 @@ export function LayoutShell({ children }: LayoutShellProps) {
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
   const isMapRoute = pathname === "/map";
+  const isAdminRoute = pathname === "/admin" || pathname.startsWith("/admin/");
 
   useEffect(() => {
     if (isAuthRoute) {
@@ -126,12 +127,12 @@ export function LayoutShell({ children }: LayoutShellProps) {
 
       <div className="flex h-screen w-screen overflow-hidden bg-bg-base text-foreground">
         {/* Sidebar */}
-        {!isMapRoute && <SessionSidebar isOpen={sidebarOpen} onClose={closeSidebar} />}
+        {!isMapRoute && !isAdminRoute && <SessionSidebar isOpen={sidebarOpen} onClose={closeSidebar} />}
 
         {/* Main panel */}
         <div className="relative z-[1] flex flex-1 flex-col overflow-hidden">
           {/* Mobile hamburger header */}
-          {!isMapRoute && (
+          {!isMapRoute && !isAdminRoute && (
             <div className="flex h-14 items-center border-b border-border px-4 md:hidden">
               <button
                 onClick={openSidebar}

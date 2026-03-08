@@ -78,6 +78,8 @@ Relationships:
 TABLE: datasets
 ────────────────────────────────
 One row per ingested NetCDF file.
+Active datasets for researcher-facing queries are those with:
+  is_active = true AND deleted_at IS NULL
 
   dataset_id            INTEGER       PRIMARY KEY, auto-increment
   name                  VARCHAR(255)  nullable
@@ -92,6 +94,7 @@ One row per ingested NetCDF file.
   variable_list         JSONB         nullable — list of variable names in the file
   summary_text          TEXT          nullable — LLM-generated or template summary
   is_active             BOOLEAN       NOT NULL, default true
+  deleted_at            TIMESTAMPTZ   nullable — non-null means soft-deleted; exclude from active queries
   dataset_version       INTEGER       NOT NULL, default 1
   created_at            TIMESTAMPTZ   NOT NULL, default now()
 

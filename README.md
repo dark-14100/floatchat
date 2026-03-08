@@ -340,6 +340,39 @@ Interactive query guidance layer for faster first-query success and better query
 
 ---
 
+### Feature 10 — Dataset Management ✅
+
+Admin-only dataset lifecycle management under `/admin` plus backend controls under `/api/v1/admin`.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Admin dashboard | `/admin` overview cards for datasets and ingestion activity (includes GDAC placeholder) |
+| Dataset lifecycle | Upload, metadata edits, summary regeneration, visibility toggle, soft delete, restore, hard-delete request |
+| Ingestion monitoring | Paginated ingestion jobs with status/source filters, retry endpoint, and SSE updates every 2 seconds |
+| Audit trail | `admin_audit_log` captures admin actions with details payload and timestamp |
+| Notification dispatch | Ingestion completion/failure and anomaly stub events route through shared email/Slack notification module |
+| Soft-delete enforcement | Researcher-facing search/discovery excludes datasets with `deleted_at` set |
+
+**Admin endpoints at `/api/v1/admin/`:**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/datasets` | Admin dataset listing with filters (`include_deleted`, `is_public`, `tags`) |
+| GET | `/datasets/{dataset_id}` | Dataset detail including ingestion history and storage estimate |
+| PATCH | `/datasets/{dataset_id}/metadata` | Update name/description/tags/visibility |
+| POST | `/datasets/{dataset_id}/regenerate-summary` | Queue async summary regeneration task |
+| POST | `/datasets/{dataset_id}/soft-delete` | Soft delete dataset |
+| POST | `/datasets/{dataset_id}/restore` | Restore soft-deleted dataset |
+| POST | `/datasets/{dataset_id}/hard-delete` | Queue async hard delete (requires confirmation payload) |
+| GET | `/ingestion-jobs` | Ingestion jobs list with filters |
+| POST | `/ingestion-jobs/{job_id}/retry` | Retry failed ingestion job |
+| GET | `/ingestion-jobs/stream` | SSE stream of job updates + heartbeat |
+| GET | `/audit-log` | Paginated admin audit log with filters |
+
+---
+
 ### Feature 13 — Authentication & User Management ✅
 
 JWT-based authentication with role-based access control.
@@ -364,7 +397,7 @@ JWT-based authentication with role-based access control.
 |---|---|
 | Public | `/health`, `GET /api/v1/search/*`, all `/api/v1/auth/*` |
 | Authenticated user | `/api/v1/query/*`, `/api/v1/chat/*`, `/api/v1/map/*`, `/api/v1/export/*` |
-| Admin only | `/api/v1/datasets/*`, `POST /api/v1/search/reindex/{id}` |
+| Admin only | `/api/v1/datasets/*`, `/api/v1/admin/*`, `POST /api/v1/search/reindex/{id}` |
 
 ---
 
@@ -484,7 +517,7 @@ Content-Type: application/json
 
 ## Database Schema
 
-Created by Alembic migrations `001` through `007`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
+Created by Alembic migrations `001` through `008`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
 
 ### Core Tables
 
@@ -512,7 +545,8 @@ pres_qc · temp_qc · psal_qc · doxy_qc · chla_qc · nitrate_qc · ph_qc · is
 ```
 dataset_id (SERIAL PK) · name · source_filename · raw_file_path · date_range_start · date_range_end
 bbox (GEOGRAPHY POLYGON) · float_count · profile_count · variable_list (JSONB)
-summary_text · is_active · dataset_version
+summary_text · description · is_active · is_public · tags (JSONB) · dataset_version
+deleted_at · deleted_by (FK SET NULL)
 ```
 
 **`float_positions`** — Lightweight spatial index. One row per `(platform_number, cycle_number)`.
@@ -524,8 +558,15 @@ latitude · longitude · geom (GEOGRAPHY POINT, GiST indexed)
 **`ingestion_jobs`** — Tracks pipeline execution.
 ```
 job_id (UUID PK) · dataset_id (FK) · original_filename · raw_file_path
-status · progress_pct · profiles_total · profiles_ingested · error_log · errors (JSONB)
+source · status · progress_pct · profiles_total · profiles_ingested · error_log · errors (JSONB)
 ```
+
+**`admin_audit_log`** — Immutable audit trail for admin actions.
+```
+log_id (UUID PK) · admin_user_id (FK SET NULL) · action · entity_type · entity_id
+details (JSONB) · created_at
+```
+Indexes: `admin_user_id` · `created_at` · composite (`entity_type`, `entity_id`)
 
 **`ocean_regions`** — 15 named basin polygons.
 ```
@@ -663,6 +704,21 @@ token_id (UUID PK) · user_id (FK CASCADE) · token_hash · expires_at · used
 | `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES` | `60` | Reset token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | Used to build password reset links |
 
+### Admin Notifications (Feature 10)
+
+| Variable | Default | Description |
+|---|---|---|
+| `NOTIFICATIONS_ENABLED` | `False` | Master switch for all notification dispatch |
+| `NOTIFICATION_EMAIL_ENABLED` | `False` | Enable SMTP email notifications |
+| `NOTIFICATION_EMAIL_SMTP_HOST` | — | SMTP host |
+| `NOTIFICATION_EMAIL_SMTP_PORT` | `587` | SMTP port |
+| `NOTIFICATION_EMAIL_SMTP_USER` | — | SMTP username |
+| `NOTIFICATION_EMAIL_SMTP_PASSWORD` | — | SMTP password |
+| `NOTIFICATION_EMAIL_FROM` | — | Sender email address |
+| `NOTIFICATION_EMAIL_TO` | — | Comma-separated recipient list |
+| `NOTIFICATION_SLACK_ENABLED` | `False` | Enable Slack webhook notifications |
+| `NOTIFICATION_SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL |
+
 ### Export
 
 | Variable | Default | Description |
@@ -745,7 +801,7 @@ pytest tests/test_clarification.py tests/test_query_history.py -v               
 
 **Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
 
-**Current backend test status (2026-03-08):** targeted Feature 9 suite `9 passed`; previous full-suite run `427 passed, 58 skipped`.
+**Current backend test status (2026-03-08):** targeted Feature 10 tests `30 passed`; previous full-suite run `457 passed, 58 skipped`.
 
 ### Frontend
 
@@ -772,7 +828,8 @@ floatchat/
 │   │       ├── 004_chat_interface.py       # chat_sessions, chat_messages
 │   │       ├── 005_auth.py                 # users, password_reset_tokens
 │   │       ├── 006_rag_pipeline.py         # query_history, HNSW index, readonly grant
-│   │       └── 007_anomaly_detection.py    # anomalies, anomaly_baselines, indexes
+│   │       ├── 007_anomaly_detection.py    # anomalies, anomaly_baselines, indexes
+│   │       └── 008_dataset_management.py   # admin_audit_log, dataset lifecycle fields, ingestion source
 │   ├── app/
 │   │   ├── main.py                         # FastAPI app entry point
 │   │   ├── config.py                       # All environment settings (pydantic-settings)
@@ -786,6 +843,7 @@ floatchat/
 │   │   │   ├── map.py                      # Geospatial exploration endpoints
 │   │   │   ├── export.py                   # Export trigger and status endpoints
 │   │   │   ├── auth.py                     # Authentication endpoints
+│   │   │   ├── admin.py                    # Dataset management/admin endpoints
 │   │   │   └── anomalies.py                # Anomaly feed/detail/review/baseline endpoints
 │   │   ├── auth/
 │   │   │   ├── jwt.py                      # Token generation and validation
@@ -796,6 +854,8 @@ floatchat/
 │   │   │   ├── detectors.py                # Four statistical anomaly detectors
 │   │   │   ├── baselines.py                # Seasonal baseline computation/upsert
 │   │   │   └── tasks.py                    # Nightly anomaly scan task
+│   │   ├── admin/
+│   │   │   └── tasks.py                    # Admin async hard-delete and summary tasks
 │   │   ├── db/
 │   │   │   ├── models.py                   # SQLAlchemy ORM models
 │   │   │   ├── session.py                  # DB engines, get_db(), get_readonly_db()
@@ -826,6 +886,10 @@ floatchat/
 │   │   │   ├── json_export.py              # JSON generation (stdlib)
 │   │   │   ├── size_estimator.py           # Sync vs async routing decision
 │   │   │   └── tasks.py                    # Celery async export task
+│   │   ├── notifications/
+│   │   │   ├── email.py                    # SMTP notification sender
+│   │   │   ├── slack.py                    # Slack webhook sender
+│   │   │   └── sender.py                   # Unified notify() dispatcher
 │   │   ├── storage/
 │   │   │   └── s3.py                       # MinIO/S3 upload, download, presign
 │   │   └── cache/
@@ -935,3 +999,4 @@ floatchat/
 | v1.5 | Feature 14: RAG retrieval-augmented NL-to-SQL |
 | v1.6 | Feature 15: Anomaly detection and review workflows |
 | v1.7 | Feature 9: Guided query assistant (gallery, autocomplete, clarification) |
+| v1.8 | Feature 10: Dataset management admin panel, notifications, and audit log |

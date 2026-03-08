@@ -285,6 +285,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.export import router as export_router
 from app.api.v1.anomalies import router as anomalies_router
 from app.api.v1.clarification import router as clarification_router
+from app.api.v1.admin import router as admin_router
 
 app.include_router(ingestion_router, prefix="/api/v1")
 app.include_router(search_router, prefix="/api/v1/search")
@@ -295,3 +296,4 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(export_router, prefix="/api/v1")
 app.include_router(anomalies_router, prefix="/api/v1")
 app.include_router(clarification_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")

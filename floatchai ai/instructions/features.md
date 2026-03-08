@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1–9, 13, 14, and 15 complete; roadmap features 10–12 are planned
+> **Status:** In Development — Features 1-10, 13, 14, and 15 complete; roadmap features 11-12 are planned
 
 ---
 
@@ -42,7 +42,7 @@
 | 14 — RAG Pipeline | ✅ Complete |
 | 15 — Anomaly Detection | ✅ Complete |
 | 9 — Guided Query Assistant | ✅ Complete |
-| 10 — Dataset Management | ⏳ Planned |
+| 10 — Dataset Management | ✅ Complete |
 | 11 — API Layer | ⏳ Planned |
 | 12 — System Monitoring | ⏳ Planned |
 
@@ -707,10 +707,10 @@ Interactive query help for new users and returning users. Provides a guided temp
 
 ## 10. Dataset Management
 
-**Status: ⏳ Planned — requires Auth (Feature 13)**
+**Status: ✅ Complete**
 
 ### Overview
-Admin interface for uploading datasets, monitoring ingestion, managing metadata, and retiring data. Admin role required throughout.
+Admin interface for uploading datasets, monitoring ingestion, managing metadata, and retiring data. Admin role is required for all endpoints and UI routes.
 
 ### Tech Stack
 | Component | Technology |
@@ -727,7 +727,7 @@ Admin interface for uploading datasets, monitoring ingestion, managing metadata,
 - Drag-and-drop upload, single `.nc` files and zip archives
 - Upload progress bar
 - Auto-trigger of ingestion pipeline on successful upload
-- Email/Slack notification on completion
+- Email/Slack notification on completion/failure
 
 #### 10.2 Track Ingestion Status
 - Dashboard: all ingestion jobs with status, duration, profiles ingested, errors
@@ -740,42 +740,53 @@ Admin interface for uploading datasets, monitoring ingestion, managing metadata,
 - Regenerate LLM summary (manual trigger)
 - View statistics: float count, profile count, date range, variable list
 - Mark as public or internal
+- Supports soft delete restore path from the same detail flow
 
 #### 10.4 Remove Outdated Datasets
 - Soft delete: marks inactive, hides from search, preserves data
-- Hard delete: removes all profiles, measurements, and raw files
+- Hard delete: async task removes profiles, measurements, anomalies, and raw files
 - Confirmation dialog with impact summary
 - Audit log in `admin_audit_log` table
 
+#### 10.5 Search/Query Enforcement + Notifications
+- Researcher-facing dataset discovery and summary endpoints exclude `deleted_at IS NOT NULL` datasets
+- NL query schema guidance updated so generated SQL treats `deleted_at IS NULL` as active datasets
+- Shared notification module (`app/notifications`) is active for ingestion outcomes and anomaly stub forwarding
+
 ### Tasks for Developers
-- [ ] Build admin dashboard page (admin role protected)
-- [ ] Build DatasetUploadPanel
-- [ ] Build IngestionJobsTable with SSE status updates
-- [ ] Build DatasetDetailPage with metadata editor
-- [ ] Implement soft and hard delete endpoints
-- [ ] Build audit log table and UI
-- [ ] Set up email/Slack notifications
+- [x] Build admin dashboard page (admin role protected)
+- [x] Build DatasetUploadPanel
+- [x] Build IngestionJobsTable with SSE status updates
+- [x] Build DatasetDetailPage with metadata editor
+- [x] Implement soft and hard delete endpoints
+- [x] Build audit log table and UI
+- [x] Set up email/Slack notifications
 
 ---
 
+
+
 ## 11. API Layer
 
-**Status: ⏳ Planned**
+**Status: ⏳ Planned — build after Dataset Management (Feature 10)**
 
 ### Overview
-Public RESTful API exposing FloatChat capabilities to external research tools and scripts. Note: the FastAPI infrastructure and most endpoints already exist — this feature adds API key auth, rate limiting, and formal documentation on top of what is already running.
+Public RESTful API exposing FloatChat capabilities to external research tools and scripts. The FastAPI infrastructure and all endpoints already exist and are running — this feature adds API key authentication, rate limiting, and formal OpenAPI documentation on top of what is already live. No new endpoints need to be built from scratch.
+
+**Important:** Feature 10 introduced `is_public` on the `datasets` table. The API layer must respect this flag — external API consumers (authenticated by API key, not JWT) must only receive data from datasets marked `is_public = true`. This is the primary new data-access constraint introduced by this feature.
 
 ### Tech Stack
 | Component | Technology |
 |---|---|
 | Framework | FastAPI (Python) — already in use |
-| Auth | API key (`X-API-Key` header) + existing JWT |
+| Auth | API key (`X-API-Key` header) for external consumers + existing JWT for internal/browser use |
 | Rate limiting | `slowapi` (FastAPI middleware) |
 | Docs | Auto-generated OpenAPI/Swagger at `/docs` |
 | Versioning | `/api/v1/` — already in place |
 | CORS | Already configured |
 
-### Endpoints (existing, to be formally documented)
+### What Already Exists (no changes needed)
+All of the following endpoints are fully built and functional. This feature documents and gates them — it does not rebuild them:
 - `POST /api/v1/query` — NL query, full pipeline
 - `GET /api/v1/datasets/search` — semantic search
 - `GET /api/v1/profiles/{profile_id}/chart-data` — visualization data
@@ -784,70 +795,155 @@ Public RESTful API exposing FloatChat capabilities to external research tools an
 - `GET /api/v1/map/*` — all geospatial endpoints (Feature 7)
 - `GET /api/v1/anomalies` — anomaly feed (Feature 15)
 
+### What This Feature Adds
+#### 11.1 API Key Authentication
+- New `api_keys` table: `key_id`, `key_hash`, `user_id` FK, `name` (label for the key), `is_active`, `created_at`, `last_used_at`, `rate_limit_override` (nullable — allows per-key rate limit customisation)
+- `POST /api/v1/auth/api-keys` — create API key (JWT-authenticated, returns plaintext key once only)
+- `GET /api/v1/auth/api-keys` — list user's API keys (shows name, created_at, last_used_at, never plaintext key)
+- `DELETE /api/v1/auth/api-keys/{key_id}` — revoke API key
+- `X-API-Key` header accepted on all public endpoints as an alternative to Bearer JWT
+- API key requests are scoped to `is_public = true` datasets only — they cannot access internal datasets regardless of the requesting user's role
+
+#### 11.2 Rate Limiting
+- `slowapi` middleware applied globally
+- Default: 100 requests/minute per API key
+- Default: 300 requests/minute per authenticated JWT user (higher limit for browser sessions)
+- Per-key override via `rate_limit_override` column in `api_keys` table
+- Rate limit headers returned on every response: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- 429 response with `Retry-After` header when limit exceeded
+
+#### 11.3 OpenAPI Documentation
+- All existing endpoints annotated with full OpenAPI descriptions: summary, description, request/response schemas, error codes
+- `is_public` dataset filtering documented explicitly
+- API key authentication documented in the security scheme
+- `/docs` (Swagger UI) and `/redoc` both enabled
+- Changelog section in docs showing endpoint history
+
+#### 11.4 Integration Test Suite
+- End-to-end tests using API key auth (not JWT) against all documented endpoints
+- Tests for rate limit enforcement (mock clock)
+- Tests for `is_public` dataset scoping — API key requests must not return internal datasets
+- Tests for API key creation, listing, and revocation
+
+### New Tables
+- **`api_keys`** — `key_id` (UUID PK), `key_hash` (SHA-256 of the plaintext key, stored only as hash), `user_id` (FK → users), `name` (VARCHAR 100), `is_active` (BOOLEAN default true), `created_at`, `last_used_at` (TIMESTAMPTZ nullable, updated on each use), `rate_limit_override` (INTEGER nullable)
+
+### Migration
+- `009_api_layer.py` — `down_revision = "008"`
+
+### Dependencies
+- Feature 10 must be complete — `is_public` column on `datasets` must exist before API key scoping can be enforced
+- Feature 13 (Auth) must be complete — API key creation endpoints require JWT auth
+- `slowapi` — new pip dependency
+
 ### Tasks for Developers
-- [ ] Implement API key authentication middleware
-- [ ] Add rate limiting (100 req/min per API key default)
-- [ ] Write OpenAPI descriptions for all endpoints
-- [ ] Build integration test suite
-- [ ] Write API usage documentation
+- [ ] Create migration 009: `api_keys` table
+- [ ] Implement API key generation (secure random, stored as SHA-256 hash)
+- [ ] Build `X-API-Key` auth middleware — resolves key, scopes to public datasets
+- [ ] Add rate limiting via `slowapi` with per-key overrides
+- [ ] Write OpenAPI annotations for all existing endpoints
+- [ ] Build integration test suite using API key auth
+- [ ] Write API usage documentation (developer guide, authentication guide, rate limit guide)
 
 ---
 
 ## 12. System Monitoring
 
-**Status: ⏳ Planned — structlog already partially in place**
+**Status: ⏳ Planned — build after API Layer (Feature 11)**
 
 ### Overview
-Operational reliability infrastructure: structured logging, error tracking, performance metrics, and ingestion monitoring.
+Operational reliability infrastructure for production deployment: structured logging pipeline, error tracking, performance metrics, and alerting. Note: `structlog` is already in use throughout the codebase and produces structured JSON logs — this feature routes those logs to a destination, adds error tracking (Sentry), adds metrics (Prometheus + Grafana), and wires up alerting. The ingestion monitoring dashboard is an extension of Feature 10's admin panel, not a separate UI.
+
+### Prerequisites Already in Place
+- `structlog` configured and used across all backend modules — logs already emit structured JSON
+- Slack webhook infrastructure built in Feature 10's notification module — alerting reuses this
+- Feature 10's admin panel — ingestion monitoring dashboard extends it rather than building separately
+- Feature 15's anomaly detection — anomaly scan job health is a key monitoring signal already producing structlog output
 
 ### Tech Stack
 | Component | Technology |
 |---|---|
-| Logging | `structlog` (already in use) → stdout → Loki or CloudWatch |
-| Error tracking | Sentry (Python SDK + React SDK) |
-| Metrics | Prometheus + Grafana |
+| Logging | `structlog` (already in use) → stdout → Loki (self-hosted) or CloudWatch (AWS) |
+| Error tracking | Sentry (Python SDK + Next.js SDK) |
+| Metrics | `prometheus-fastapi-instrumentator` + Grafana |
 | Uptime monitoring | UptimeRobot or Healthchecks.io |
-| Alerting | Slack webhook (PagerDuty for production) |
-| Tracing | OpenTelemetry (optional) |
+| Alerting | Slack webhook (reuses Feature 10's `app/notifications/slack.py`) |
+| Tracing | OpenTelemetry (optional, lower priority) |
 
 ### Features
 
-#### 12.1 Logging
-- Structured JSON logs: `timestamp`, `endpoint`, `method`, `status_code`, `latency_ms`, `user_id`, `session_id`
-- Log every NL query: raw input, generated SQL, provider, execution time, row count
-- Log ingestion events: file name, records parsed, QC flags filtered, errors
+#### 12.1 Logging Pipeline
+- Structlog is already emitting structured JSON — this feature routes it to a destination
+- Log destination configured via `LOG_SINK` env var: `stdout` (dev), `loki` (self-hosted), `cloudwatch` (AWS)
+- Log fields already in use: `timestamp`, `endpoint`, `method`, `status_code`, `latency_ms`, `user_id`, `session_id`
+- Confirm all NL query log fields are present: `nl_query`, `generated_sql`, `provider`, `execution_time_ms`, `row_count` — add any missing fields to the pipeline logging
+- Confirm all ingestion log fields are present: `file_name`, `records_parsed`, `qc_flags_filtered`, `error_count` — add any missing fields to ingestion tasks
+- Log retention policy configurable via env var (default: 30 days)
 
-#### 12.2 Error Tracking
-- Sentry on FastAPI backend and Next.js frontend
-- Custom tags: `query_type`, `dataset_id`, `float_id`, `provider`
-- Alert on new error types or rate spikes
+#### 12.2 Error Tracking (Sentry)
+- Sentry Python SDK on FastAPI backend: captures unhandled exceptions, slow requests, and DB query errors
+- Sentry Next.js SDK on frontend: captures unhandled React errors and failed API calls
+- Custom tags on every Sentry event: `query_type`, `dataset_id`, `float_id`, `provider` where available
+- Alert rules: new error type → immediate Slack notification; error rate spike (>10x baseline in 5 minutes) → Slack notification
+- `SENTRY_DSN_BACKEND` and `SENTRY_DSN_FRONTEND` env vars — Sentry is disabled when these are absent (dev)
 
 #### 12.3 Performance Metrics
-- Prometheus: request latency (p50/p95/p99) per endpoint, LLM call latency per provider, DB query time, Redis cache hit rate
-- Alert if p95 > 5s on `/api/v1/query`
-- Grafana dashboard for all metrics
+- `prometheus-fastapi-instrumentator` auto-instruments all FastAPI endpoints
+- Additional custom metrics:
+  - LLM call latency per provider (histogram)
+  - DB query time per endpoint (histogram)
+  - Redis cache hit rate (counter)
+  - Celery task duration per task name (histogram)
+  - Anomaly scan duration (gauge, from Feature 15's nightly task)
+- Prometheus scrape endpoint: `GET /metrics` (unauthenticated, not proxied to public)
+- Grafana dashboard with panels: request latency p50/p95/p99 per endpoint, LLM latency per provider, DB query time, Redis cache hit rate, active Celery tasks, ingestion job success rate
+- Alert: p95 latency > 5s on `POST /api/v1/query` → Slack notification
 
-#### 12.4 Ingestion Monitoring
-- Per-job tracking: duration, records ingested, error count
-- Slack alert on ingestion failure
-- Daily summary: profiles ingested, new floats discovered, failed files
+#### 12.4 Ingestion Monitoring Dashboard (Extension of Feature 10 Admin Panel)
+- New tab or section in the Feature 10 admin panel (not a separate UI)
+- Per-job tracking already exists in Feature 10's ingestion jobs table — this adds aggregate views:
+  - Daily summary: profiles ingested, new floats discovered, failed files, ingestion duration
+  - 7-day trend chart of ingestion volume
+  - Failed job rate over time
+- Slack alert on any ingestion failure (already triggered by Feature 10's notification module — confirm this is working and add a daily digest if not)
+- When GDAC auto-sync is built, its job metrics appear here automatically via the `source` column
+
+#### 12.5 Uptime Monitoring
+- Healthcheck endpoint: `GET /api/v1/health` — returns `{ "status": "ok", "db": "ok", "redis": "ok", "celery": "ok" }` with individual component checks
+- External uptime monitor (UptimeRobot or Healthchecks.io) pings `/api/v1/health` every 60 seconds
+- Alert to Slack if health check fails for 3 consecutive checks
+
+### New Endpoints
+- `GET /api/v1/health` — public health check (no auth required)
+- `GET /metrics` — Prometheus scrape endpoint (no auth, bind to internal network only in production)
+
+### Dependencies
+- Feature 10 complete — notification module (`app/notifications/slack.py`) reused for alerting; admin panel extended for ingestion monitoring dashboard
+- Feature 11 complete — `/metrics` endpoint must not be exposed through the API key rate limiter
+- `prometheus-fastapi-instrumentator` — new pip dependency
+- `sentry-sdk[fastapi]` — new pip dependency
+- `@sentry/nextjs` — new npm dependency
 
 ### Tasks for Developers
-- [ ] Configure Sentry DSN for backend and frontend
-- [ ] Install Prometheus client (`prometheus-fastapi-instrumentator`)
-- [ ] Build Grafana dashboard
-- [ ] Set up Slack webhook alerting
-- [ ] Build ingestion monitoring dashboard in admin UI
-- [ ] Write alert runbook
+- [ ] Configure Sentry DSN for backend and frontend — disabled gracefully when DSN absent
+- [ ] Audit and fill gaps in structlog fields (NL query fields, ingestion fields)
+- [ ] Install and configure `prometheus-fastapi-instrumentator`
+- [ ] Add custom Prometheus metrics (LLM latency, DB time, Redis hit rate, Celery duration, anomaly scan duration)
+- [ ] Build Grafana dashboard with all metric panels
+- [ ] Build `GET /api/v1/health` endpoint with component checks
+- [ ] Set up external uptime monitor
+- [ ] Extend Feature 10 admin panel with ingestion monitoring aggregate views
+- [ ] Configure Slack alerting rules (Sentry + Prometheus + uptime)
+- [ ] Write alert runbook documenting each alert and its remediation steps
 
 ---
 
 ## 13. Authentication & User Management
 
-**Status: ⏳ Next to build**
+**Status: ✅ Complete — built before Features 8, 14, 15, 9, 10**
 
 ### Overview
-JWT-based authentication with RBAC. Enables multi-tenant session isolation, protects all chat and query endpoints, and is prerequisite for the RAG Pipeline, Anomaly Detection, and Dataset Management features.
+JWT-based authentication with RBAC. Enables multi-tenant session isolation, protects all chat and query endpoints. Built as a prerequisite for Feature 14 (RAG Pipeline), Feature 15 (Anomaly Detection), Feature 9 (Guided Query Assistant), and Feature 10 (Dataset Management).
 
 ### Tech Stack
 | Component | Technology |
@@ -858,46 +954,45 @@ JWT-based authentication with RBAC. Enables multi-tenant session isolation, prot
 | RBAC | `researcher` role (default), `admin` role |
 | Frontend | Next.js App Router middleware for route protection |
 
-### Features
+### What Was Built
 
-#### 13.1 User Registration & Login
+#### 13.1 User Registration & Login ✅
 - `POST /api/v1/auth/signup` — name, email, password; returns JWT
 - `POST /api/v1/auth/login` — email, password; returns JWT
 - `POST /api/v1/auth/logout` — invalidates refresh token
 - `GET /api/v1/auth/me` — returns current user profile
 - `POST /api/v1/auth/forgot-password` — sends reset email
 
-#### 13.2 Route Protection
+#### 13.2 Route Protection ✅
 - JWT middleware on all `/api/v1/chat/*`, `/api/v1/query/*`, `/api/v1/map/*`, `/api/v1/export/*` endpoints
-- Admin role required for `/api/v1/admin/*` endpoints
+- Admin role required for `/api/v1/admin/*` endpoints (enforced at router level via `get_current_admin_user`)
 - Frontend: unauthenticated users redirect to `/login`
 
-#### 13.3 Session Migration
+#### 13.3 Session Migration ✅
 - Anonymous browser-UUID sessions linked to user account on first login
 - `chat_sessions.user_identifier` becomes FK to `users.user_id`
 
-#### 13.4 UI
-- `/login` and `/signup` pages following design spec §9
+#### 13.4 UI ✅
+- `/login` and `/signup` pages
 - User profile in sidebar footer: initials avatar, name, logout button
-- Theme toggle remains in sidebar footer
+- Theme toggle in sidebar footer
 
-### New Tables
+### Tables Built
 - **`users`** — `user_id`, `email`, `hashed_password`, `name`, `role`, `created_at`, `is_active`
 - **`password_reset_tokens`** — `token_id`, `user_id`, `token_hash`, `expires_at`, `used`
 
 ### Migration
-- `005_auth.py` — `down_revision = "004"`
+- `005_auth.py` — `down_revision = "004"` ✅
 
-### Tasks for Developers
-- [ ] Build users table migration
-- [ ] Implement JWT middleware
-- [ ] Build signup, login, logout, me, forgot-password endpoints
-- [ ] Add route protection to all relevant endpoints
-- [ ] Build /login and /signup pages (design spec §9)
-- [ ] Add user profile element to SessionSidebar
-- [ ] Implement session migration on first login
+### Auth Dependencies Available for Other Features
+The following are importable and used throughout the codebase:
+- `get_current_user` — returns authenticated `User`, raises 401 if not authenticated
+- `get_current_admin_user` — returns authenticated `User` with `role = "admin"`, raises 403 for non-admin
 
----
+### Notes for Features 11 and 12
+- Feature 11 (API Layer) extends auth by adding API key support as an alternative to JWT. The `get_current_user` dependency will be updated to also accept `X-API-Key` headers.
+- Feature 12 (Monitoring) uses the `user_id` already present on all structlog output for per-user query tracing in Sentry and Grafana.
+
 
 ## 14. RAG Pipeline
 

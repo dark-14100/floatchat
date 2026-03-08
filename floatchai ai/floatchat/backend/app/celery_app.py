@@ -27,6 +27,7 @@ celery = Celery(
         "app.search.tasks",
         "app.export.tasks",
         "app.anomaly.tasks",
+        "app.admin.tasks",
     ],  # Auto-discover tasks modules
 )
 
@@ -62,6 +63,8 @@ celery.conf.update(
         "app.search.tasks.index_dataset_task": {"queue": "default"},
         "app.export.tasks.generate_export_task": {"queue": "default"},
         "app.anomaly.tasks.run_anomaly_scan": {"queue": "default"},
+        "app.admin.tasks.hard_delete_dataset_task": {"queue": "default"},
+        "app.admin.tasks.regenerate_summary_task": {"queue": "default"},
     },
     
     # Task default queue

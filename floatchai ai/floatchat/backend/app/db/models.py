@@ -20,8 +20,9 @@ Tables:
     13. users - One row per authenticated user (Feature 13)
     14. password_reset_tokens - Password reset flow tokens (Feature 13)
     15. query_history - Successful NL query history for RAG retrieval (Feature 14)
-    16. anomalies - Nightly detected contextual anomalies (Feature 15)
-    17. anomaly_baselines - Seasonal/monthly anomaly baselines (Feature 15)
+    16. admin_audit_log - Admin action audit trail (Feature 10)
+    17. anomalies - Nightly detected contextual anomalies (Feature 15)
+    18. anomaly_baselines - Seasonal/monthly anomaly baselines (Feature 15)
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -125,7 +126,20 @@ class Dataset(Base):
     profile_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     variable_list: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     summary_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=sa.text("true"),
+        nullable=False,
+    )
+    tags: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
     dataset_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -298,6 +312,12 @@ class IngestionJob(Base):
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source: Mapped[str] = mapped_column(
+        String(50),
+        CheckConstraint("source IN ('manual_upload', 'gdac_sync')"),
+        server_default=sa.text("'manual_upload'"),
+        nullable=False,
     )
 
     # Relationships
@@ -580,7 +600,49 @@ class User(Base):
 
 
 # =============================================================================
-# 14. Password Reset Tokens (Feature 13)
+# 14. Admin Audit Log (Feature 10)
+# =============================================================================
+class AdminAuditLog(Base):
+    """Append-only audit trail for all state-changing admin actions."""
+    __tablename__ = "admin_audit_log"
+    __table_args__ = (
+        Index("ix_admin_audit_log_admin_user_id", "admin_user_id"),
+        Index("ix_admin_audit_log_created_at", "created_at"),
+        Index("ix_admin_audit_log_entity_type_entity_id", "entity_type", "entity_id"),
+        CheckConstraint(
+            "action IN ('dataset_upload_started', 'dataset_soft_deleted', 'dataset_hard_deleted', "
+            "'dataset_metadata_updated', 'dataset_summary_regenerated', 'dataset_visibility_changed', "
+            "'ingestion_job_retried', 'hard_delete_requested', 'hard_delete_completed')",
+            name="ck_admin_audit_log_action",
+        ),
+        CheckConstraint(
+            "entity_type IN ('dataset', 'ingestion_job')",
+            name="ck_admin_audit_log_entity_type",
+        ),
+    )
+
+    log_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    admin_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # One-directional relationship keeps existing User model additive-only.
+    admin_user: Mapped[Optional["User"]] = relationship("User")
+
+
+# =============================================================================
+# 15. Password Reset Tokens (Feature 13)
 # =============================================================================
 class PasswordResetToken(Base):
     """Password reset tokens stored as hashes with expiry and used flag."""
@@ -608,7 +670,7 @@ class PasswordResetToken(Base):
 
 
 # =============================================================================
-# 15. Query History (Feature 14)
+# 16. Query History (Feature 14)
 # =============================================================================
 class QueryHistory(Base):
     """Successful query history used for tenant-scoped RAG retrieval."""
@@ -647,7 +709,7 @@ class QueryHistory(Base):
 
 
 # =============================================================================
-# 16. Anomalies (Feature 15)
+# 17. Anomalies (Feature 15)
 # =============================================================================
 class Anomaly(Base):
     """Contextually unusual profile reading detected by nightly anomaly scan."""
@@ -710,7 +772,7 @@ class Anomaly(Base):
 
 
 # =============================================================================
-# 17. Anomaly Baselines (Feature 15)
+# 18. Anomaly Baselines (Feature 15)
 # =============================================================================
 class AnomalyBaseline(Base):
     """Pre-computed monthly baselines by region/variable for seasonal detection."""

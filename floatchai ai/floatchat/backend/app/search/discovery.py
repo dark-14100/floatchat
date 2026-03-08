@@ -287,7 +287,7 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
     Includes: name, summary_text, date_range_start, date_range_end,
     float_count, profile_count, variable_list, bbox as GeoJSON, is_active.
 
-    Raises ValueError if the dataset is not found or is inactive.
+    Raises ValueError if the dataset is not found, is inactive, or was soft-deleted.
 
     Args:
         dataset_id: Primary key of the dataset.
@@ -297,7 +297,7 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
         A dict with all summary fields.
 
     Raises:
-        ValueError: If dataset not found or is_active is False.
+        ValueError: If dataset not found, is_active is False, or dataset is soft-deleted.
     """
     start_time = time.time()
 
@@ -310,6 +310,9 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
 
     if not dataset.is_active:
         raise ValueError(f"Dataset is inactive: {dataset_id}")
+
+    if getattr(dataset, "deleted_at", None) is not None:
+        raise ValueError(f"Dataset is soft-deleted: {dataset_id}")
 
     # Convert bbox to GeoJSON if present
     bbox_geojson = None
@@ -350,10 +353,10 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
 
 def get_all_summaries(db: Session) -> list[dict[str, Any]]:
     """
-    Return lightweight summary cards for all active datasets (FR-23).
+    Return lightweight summary cards for all active, non-deleted datasets (FR-23).
 
     Ordered by ingestion_date descending. Truncates summary_text to 300
-    characters. Never returns inactive datasets. No pagination for v1.
+    characters. Never returns inactive or soft-deleted datasets. No pagination for v1.
 
     Args:
         db: SQLAlchemy session.
@@ -367,6 +370,7 @@ def get_all_summaries(db: Session) -> list[dict[str, Any]]:
     stmt = (
         select(Dataset)
         .where(Dataset.is_active == True)  # noqa: E712
+        .where(Dataset.deleted_at.is_(None))
         .order_by(Dataset.ingestion_date.desc())
     )
     datasets = db.execute(stmt).scalars().all()

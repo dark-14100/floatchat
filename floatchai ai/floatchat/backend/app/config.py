@@ -146,6 +146,20 @@ class Settings(BaseSettings):
     ANOMALY_CLUSTER_WINDOW_DAYS: int = 7
     ANOMALY_SEASONAL_MIN_SAMPLES: int = 30
     ANOMALY_SEASONAL_THRESHOLD_STD: float = 2.0
+
+    # =========================================================================
+    # Notifications (Feature 10)
+    # =========================================================================
+    NOTIFICATIONS_ENABLED: bool = False
+    NOTIFICATION_EMAIL_ENABLED: bool = False
+    NOTIFICATION_EMAIL_SMTP_HOST: Optional[str] = None
+    NOTIFICATION_EMAIL_SMTP_PORT: int = 587
+    NOTIFICATION_EMAIL_SMTP_USER: Optional[str] = None
+    NOTIFICATION_EMAIL_SMTP_PASSWORD: Optional[str] = None
+    NOTIFICATION_EMAIL_FROM: Optional[str] = None
+    NOTIFICATION_EMAIL_TO: Optional[str] = None  # Comma-separated recipients
+    NOTIFICATION_SLACK_ENABLED: bool = False
+    NOTIFICATION_SLACK_WEBHOOK_URL: Optional[str] = None
     
     # Provider-specific API keys and base URLs
     DEEPSEEK_API_KEY: Optional[str] = None

@@ -18,14 +18,28 @@ from app.celery_app import celery
 from app.config import settings
 from app.db.models import Anomaly, Profile
 from app.db.session import SessionLocal
+from app.notifications.sender import notify
 
 logger = structlog.get_logger(__name__)
 
 
 def _notify_new_anomalies(created_anomalies: list[Anomaly]) -> None:
-    """Placeholder for Feature 10 notification integration."""
-    # TODO: Feature 10 - wire shared notification infrastructure.
-    _ = created_anomalies
+    """Best-effort anomaly notification dispatch via shared sender."""
+    anomaly_count = len(created_anomalies)
+    if anomaly_count == 0:
+        return
+
+    try:
+        severity = _severity_breakdown(created_anomalies)
+        notify(
+            "anomalies_detected",
+            {
+                "anomaly_count": anomaly_count,
+                "severity": severity,
+            },
+        )
+    except Exception as exc:
+        logger.warning("anomaly_notification_dispatch_failed", error=str(exc))
 
 
 def _run_detector_safely(
