@@ -1,0 +1,3 @@
+# Python bytecode/cache noise
+__pycache__/
+*.pyc

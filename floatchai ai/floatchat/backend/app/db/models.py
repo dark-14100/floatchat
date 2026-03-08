@@ -23,6 +23,8 @@ Tables:
     16. admin_audit_log - Admin action audit trail (Feature 10)
     17. anomalies - Nightly detected contextual anomalies (Feature 15)
     18. anomaly_baselines - Seasonal/monthly anomaly baselines (Feature 15)
+    19. gdac_sync_runs - GDAC synchronization run history
+    20. gdac_sync_state - GDAC synchronization checkpoint state
 
 Materialized Views:
     - mv_float_latest_position - Latest position per float
@@ -612,11 +614,12 @@ class AdminAuditLog(Base):
         CheckConstraint(
             "action IN ('dataset_upload_started', 'dataset_soft_deleted', 'dataset_hard_deleted', "
             "'dataset_metadata_updated', 'dataset_summary_regenerated', 'dataset_visibility_changed', "
-            "'ingestion_job_retried', 'hard_delete_requested', 'hard_delete_completed')",
+            "'ingestion_job_retried', 'hard_delete_requested', 'hard_delete_completed', "
+            "'gdac_sync_triggered')",
             name="ck_admin_audit_log_action",
         ),
         CheckConstraint(
-            "entity_type IN ('dataset', 'ingestion_job')",
+            "entity_type IN ('dataset', 'ingestion_job', 'gdac_sync_run')",
             name="ck_admin_audit_log_entity_type",
         ),
     )
@@ -801,5 +804,58 @@ class AnomalyBaseline(Base):
     std_dev: Mapped[float] = mapped_column(Double, nullable=False)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# =============================================================================
+# 19. GDAC Sync Runs
+# =============================================================================
+class GDACSyncRun(Base):
+    """GDAC synchronization run history and aggregate counters."""
+
+    __tablename__ = "gdac_sync_runs"
+    __table_args__ = (
+        Index("ix_gdac_sync_runs_started_at", "started_at"),
+        Index("ix_gdac_sync_runs_status", "status"),
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed', 'partial')",
+            name="ck_gdac_sync_runs_status",
+        ),
+        CheckConstraint(
+            "triggered_by IN ('scheduled', 'manual')",
+            name="ck_gdac_sync_runs_triggered_by",
+        ),
+    )
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    index_profiles_found: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    profiles_downloaded: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    profiles_ingested: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    profiles_skipped: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gdac_mirror: Mapped[str] = mapped_column(String(100), nullable=False)
+    lookback_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    triggered_by: Mapped[str] = mapped_column(String(20), nullable=False)
+
+
+# =============================================================================
+# 20. GDAC Sync State
+# =============================================================================
+class GDACSyncState(Base):
+    """Key-value checkpoint state for GDAC synchronization."""
+
+    __tablename__ = "gdac_sync_state"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -9,7 +9,7 @@ from typing import Any, Optional
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -21,13 +21,16 @@ from app.db.models import (
     AdminAuditLog,
     Anomaly,
     Dataset,
+    GDACSyncRun,
     IngestionJob,
     Measurement,
     Profile,
     User,
 )
 from app.db.session import get_db
+from app.gdac.tasks import run_gdac_sync_task
 from app.ingestion.tasks import ingest_file_task, ingest_zip_task
+from app.rate_limiter import limiter
 from app.storage.s3 import get_s3_client
 
 logger = structlog.get_logger(__name__)
@@ -64,6 +67,11 @@ def _sse_event(event_type: str, payload: dict[str, Any]) -> str:
     return f"event: {event_type}\\ndata: {json.dumps(payload)}\\n\\n"
 
 
+def _gdac_manual_trigger_limit_key(_request: Request) -> str:
+    """Global limiter key so all admins share one manual-trigger window."""
+    return "gdac_sync_manual_trigger_global"
+
+
 def _serialize_dataset(dataset: Dataset) -> dict[str, Any]:
     """Serialize dataset fields used by admin endpoints."""
     return {
@@ -86,6 +94,29 @@ def _serialize_dataset(dataset: Dataset) -> dict[str, Any]:
         "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
         "deleted_at": dataset.deleted_at.isoformat() if dataset.deleted_at else None,
         "deleted_by": str(dataset.deleted_by) if dataset.deleted_by else None,
+    }
+
+
+def _serialize_gdac_sync_run(run: GDACSyncRun) -> dict[str, Any]:
+    """Serialize GDAC sync run rows for admin API responses."""
+    duration_seconds: Optional[float] = None
+    if run.completed_at and run.started_at:
+        duration_seconds = (run.completed_at - run.started_at).total_seconds()
+
+    return {
+        "run_id": str(run.run_id),
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "status": run.status,
+        "index_profiles_found": run.index_profiles_found,
+        "profiles_downloaded": run.profiles_downloaded,
+        "profiles_ingested": run.profiles_ingested,
+        "profiles_skipped": run.profiles_skipped,
+        "error_message": run.error_message,
+        "gdac_mirror": run.gdac_mirror,
+        "lookback_days": run.lookback_days,
+        "triggered_by": run.triggered_by,
+        "duration_seconds": duration_seconds,
     }
 
 
@@ -443,6 +474,89 @@ async def hard_delete_dataset(
     db.commit()
 
     return {"task_id": task.id, "status": "queued"}
+
+
+@router.post("/gdac-sync/trigger")
+@limiter.limit("1/10minutes", key_func=_gdac_manual_trigger_limit_key)
+async def trigger_gdac_sync(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin_user),
+) -> dict[str, Any]:
+    """Enqueue a manual GDAC sync run with shared server-side rate limiting."""
+    del request
+
+    task = run_gdac_sync_task.delay(triggered_by="manual")
+
+    _write_audit_log(
+        db,
+        admin_user_id=current_admin.user_id,
+        action="gdac_sync_triggered",
+        entity_type="gdac_sync_run",
+        entity_id=task.id,
+        details={"task_id": task.id, "triggered_by": "manual"},
+    )
+    db.commit()
+
+    return {
+        "run_id": task.id,
+        "status": "queued",
+    }
+
+
+@router.get("/gdac-sync/runs")
+async def list_gdac_sync_runs(
+    status_filter: Optional[str] = Query(None, alias="status"),
+    days: int = Query(30, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return paginated GDAC sync runs ordered by newest start time."""
+    valid_statuses = {"running", "completed", "failed", "partial"}
+    if status_filter and status_filter not in valid_statuses:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status filter")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    query = (
+        select(GDACSyncRun)
+        .where(GDACSyncRun.started_at >= cutoff)
+        .order_by(GDACSyncRun.started_at.desc())
+    )
+
+    if status_filter:
+        query = query.where(GDACSyncRun.status == status_filter)
+
+    total = len(db.execute(query).scalars().all())
+    rows = db.execute(query.limit(limit).offset(offset)).scalars().all()
+
+    return {
+        "runs": [_serialize_gdac_sync_run(run) for run in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/gdac-sync/runs/{run_id}")
+async def get_gdac_sync_run_detail(
+    run_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return full detail for one GDAC sync run."""
+    try:
+        parsed_run_id = uuid.UUID(run_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid run_id")
+
+    run = db.execute(
+        select(GDACSyncRun).where(GDACSyncRun.run_id == parsed_run_id)
+    ).scalar_one_or_none()
+
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GDAC sync run not found")
+
+    return _serialize_gdac_sync_run(run)
 
 
 @router.get("/ingestion-jobs")

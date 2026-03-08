@@ -22,6 +22,7 @@ ALLOWED_TABLES: set[str] = {
     "dataset_embeddings",
     "float_embeddings",
     "anomalies",
+    "gdac_sync_runs",
     "mv_float_latest_position",
     "mv_dataset_stats",
 }
@@ -200,6 +201,24 @@ Tracks every ingestion job. Status: pending → running → succeeded/failed.
   started_at            TIMESTAMPTZ   nullable
   completed_at          TIMESTAMPTZ   nullable
   created_at            TIMESTAMPTZ   NOT NULL, default now()
+
+────────────────────────────────
+TABLE: gdac_sync_runs
+────────────────────────────────
+Nightly and manual GDAC synchronization run history.
+
+  run_id                UUID          PRIMARY KEY
+  started_at            TIMESTAMPTZ   NOT NULL, default now()
+  completed_at          TIMESTAMPTZ   nullable
+  status                VARCHAR(20)   NOT NULL — CHECK IN ('running','completed','failed','partial')
+  index_profiles_found  INTEGER       nullable
+  profiles_downloaded   INTEGER       nullable
+  profiles_ingested     INTEGER       nullable
+  profiles_skipped      INTEGER       nullable
+  error_message         TEXT          nullable
+  gdac_mirror           VARCHAR(100)  NOT NULL
+  lookback_days         INTEGER       NOT NULL
+  triggered_by          VARCHAR(20)   NOT NULL — CHECK IN ('scheduled','manual')
 
 ────────────────────────────────
 TABLE: ocean_regions

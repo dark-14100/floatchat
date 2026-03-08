@@ -28,6 +28,7 @@ celery = Celery(
         "app.export.tasks",
         "app.anomaly.tasks",
         "app.admin.tasks",
+        "app.gdac.tasks",
     ],  # Auto-discover tasks modules
 )
 
@@ -65,6 +66,7 @@ celery.conf.update(
         "app.anomaly.tasks.run_anomaly_scan": {"queue": "default"},
         "app.admin.tasks.hard_delete_dataset_task": {"queue": "default"},
         "app.admin.tasks.regenerate_summary_task": {"queue": "default"},
+        "app.gdac.tasks.run_gdac_sync_task": {"queue": "default"},
     },
     
     # Task default queue
@@ -84,6 +86,11 @@ celery.conf.update(
         "retry-failed-jobs": {
             "task": "app.ingestion.tasks.retry_stale_jobs",
             "schedule": 900.0,  # 15 minutes
+        },
+        # Nightly GDAC sync run (Feature GDAC)
+        "run-gdac-sync-nightly": {
+            "task": "app.gdac.tasks.run_gdac_sync_task",
+            "schedule": crontab(hour=1, minute=0),
         },
         # Nightly anomaly detection scan (Feature 15)
         "run-anomaly-scan-nightly": {

@@ -348,7 +348,7 @@ Admin-only dataset lifecycle management under `/admin` plus backend controls und
 
 | Capability | Behavior |
 |---|---|
-| Admin dashboard | `/admin` overview cards for datasets and ingestion activity (includes GDAC placeholder) |
+| Admin dashboard | `/admin` overview cards for datasets, ingestion activity, and live GDAC sync controls |
 | Dataset lifecycle | Upload, metadata edits, summary regeneration, visibility toggle, soft delete, restore, hard-delete request |
 | Ingestion monitoring | Paginated ingestion jobs with status/source filters, retry endpoint, and SSE updates every 2 seconds |
 | Audit trail | `admin_audit_log` captures admin actions with details payload and timestamp |
@@ -370,6 +370,24 @@ Admin-only dataset lifecycle management under `/admin` plus backend controls und
 | POST | `/ingestion-jobs/{job_id}/retry` | Retry failed ingestion job |
 | GET | `/ingestion-jobs/stream` | SSE stream of job updates + heartbeat |
 | GET | `/audit-log` | Paginated admin audit log with filters |
+| POST | `/gdac-sync/trigger` | Trigger manual GDAC synchronization run (rate limited) |
+| GET | `/gdac-sync/runs` | List GDAC sync runs (paginated, newest first) |
+| GET | `/gdac-sync/runs/{run_id}` | Fetch one GDAC sync run with counts and status |
+
+### GDAC Auto-Sync (Feature 10.6) ✅
+
+Automated ingestion path for recently updated ARGO profiles from GDAC mirrors.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Nightly scheduling | Celery beat job `run-gdac-sync-nightly` runs at 01:00 UTC |
+| Mirror failover | Primary/secondary GDAC mirrors with timeout and fallback |
+| Incremental sync state | `gdac_sync_state` stores `last_sync_index_date` and `last_sync_completed_at` |
+| Run history | `gdac_sync_runs` records status, counts, mirror, lookback window, and errors |
+| Safe ingestion handoff | Downloaded profiles enqueue through existing ingestion pipeline with `source='gdac_sync'` |
+| Failure handling | Task wrapper is non-raising; download/notification issues do not abort whole run |
 
 ---
 
@@ -517,7 +535,7 @@ Content-Type: application/json
 
 ## Database Schema
 
-Created by Alembic migrations `001` through `008`. Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
+Created by Alembic migrations `001` through `010` (`009` reserved). Requires PostgreSQL 15 with PostGIS, pgvector, pg_trgm, and pgcrypto extensions.
 
 ### Core Tables
 
@@ -567,6 +585,19 @@ log_id (UUID PK) · admin_user_id (FK SET NULL) · action · entity_type · enti
 details (JSONB) · created_at
 ```
 Indexes: `admin_user_id` · `created_at` · composite (`entity_type`, `entity_id`)
+
+**`gdac_sync_runs`** — GDAC synchronization run history.
+```
+run_id (UUID PK) · started_at · completed_at · status · index_profiles_found
+profiles_downloaded · profiles_ingested · profiles_skipped · error_message
+gdac_mirror · lookback_days · triggered_by
+```
+Constraints: status in (`running`, `completed`, `failed`, `partial`) · triggered_by in (`scheduled`, `manual`)
+
+**`gdac_sync_state`** — Lightweight key-value checkpoint store for sync progress.
+```
+key (PK) · value · updated_at
+```
 
 **`ocean_regions`** — 15 named basin polygons.
 ```
@@ -719,6 +750,20 @@ token_id (UUID PK) · user_id (FK CASCADE) · token_hash · expires_at · used
 | `NOTIFICATION_SLACK_ENABLED` | `False` | Enable Slack webhook notifications |
 | `NOTIFICATION_SLACK_WEBHOOK_URL` | — | Slack incoming webhook URL |
 
+### GDAC Auto-Sync
+
+| Variable | Default | Description |
+|---|---|---|
+| `GDAC_SYNC_ENABLED` | `False` | Master switch for scheduled/manual GDAC sync |
+| `GDAC_PRIMARY_MIRROR` | `https://data-argo.ifremer.fr` | Primary GDAC mirror base URL |
+| `GDAC_SECONDARY_MIRROR` | `https://usgodae.org/ftp/outgoing/argo` | Secondary GDAC mirror base URL |
+| `GDAC_LOOKBACK_DAYS` | `30` | Number of days scanned from GDAC index per run |
+| `GDAC_MAX_CONCURRENT_DOWNLOADS` | `4` | Concurrent GDAC profile download workers |
+| `GDAC_DOWNLOAD_TIMEOUT_SECONDS` | `30` | Per-file download timeout |
+| `GDAC_MIRROR_TIMEOUT_SECONDS` | `10` | Mirror health/index timeout |
+| `GDAC_INDEX_BATCH_SIZE` | `1000` | Stream-processing batch size for index parsing |
+| `GDAC_CONTACT_EMAIL` | — | Optional contact identifier in GDAC User-Agent |
+
 ### Export
 
 | Variable | Default | Description |
@@ -797,11 +842,12 @@ pytest tests/test_auth_api.py -v                                                
 pytest tests/test_rag.py -v                                                                        # Feature 14
 pytest tests/test_anomaly_detectors.py tests/test_anomaly_tasks.py tests/test_anomaly_api.py -v   # Feature 15
 pytest tests/test_clarification.py tests/test_query_history.py -v                                  # Feature 9
+pytest tests/test_gdac_index.py tests/test_gdac_downloader.py tests/test_gdac_sync.py -v          # Feature 10.6 (GDAC)
 ```
 
 **Docker note:** Feature 2 tests (`test_schema.py`, `test_dal.py`) require Docker running. When Docker is unavailable they skip gracefully — they do not fail.
 
-**Current backend test status (2026-03-08):** targeted Feature 10 tests `30 passed`; previous full-suite run `457 passed, 58 skipped`.
+**Current backend test status (2026-03-09):** targeted GDAC tests `19 passed`; latest full-suite run `464 passed, 58 skipped`.
 
 ### Frontend
 
@@ -829,7 +875,8 @@ floatchat/
 │   │       ├── 005_auth.py                 # users, password_reset_tokens
 │   │       ├── 006_rag_pipeline.py         # query_history, HNSW index, readonly grant
 │   │       ├── 007_anomaly_detection.py    # anomalies, anomaly_baselines, indexes
-│   │       └── 008_dataset_management.py   # admin_audit_log, dataset lifecycle fields, ingestion source
+│   │       ├── 008_dataset_management.py   # admin_audit_log, dataset lifecycle fields, ingestion source
+│   │       └── 010_gdac_sync.py            # gdac_sync_runs, gdac_sync_state, audit constraint updates
 │   ├── app/
 │   │   ├── main.py                         # FastAPI app entry point
 │   │   ├── config.py                       # All environment settings (pydantic-settings)
@@ -886,6 +933,11 @@ floatchat/
 │   │   │   ├── json_export.py              # JSON generation (stdlib)
 │   │   │   ├── size_estimator.py           # Sync vs async routing decision
 │   │   │   └── tasks.py                    # Celery async export task
+│   │   ├── gdac/
+│   │   │   ├── index.py                    # Streaming GDAC index parsing + mirror probing
+│   │   │   ├── downloader.py               # Concurrent profile downloader with retry/backoff
+│   │   │   ├── sync.py                     # Orchestration and checkpoint updates
+│   │   │   └── tasks.py                    # Celery wrapper task for scheduled/manual sync
 │   │   ├── notifications/
 │   │   │   ├── email.py                    # SMTP notification sender
 │   │   │   ├── slack.py                    # Slack webhook sender
@@ -901,11 +953,16 @@ floatchat/
 │   │   ├── create_readonly_user.sql
 │   │   └── compute_baselines.py            # Feature 15 baseline CLI
 │   ├── tests/
+│   │   ├── test_gdac_index.py
+│   │   ├── test_gdac_downloader.py
+│   │   └── test_gdac_sync.py
 │   ├── celery_worker.py
 │   ├── requirements.txt
 │   └── alembic.ini
 └── frontend/
     ├── app/                                # Next.js App Router pages
+    │   ├── admin/                          # Dataset admin overview + GDAC panel
+    │   ├── admin/gdac-sync/                # GDAC run history/detail page
     │   ├── chat/[session_id]/              # Main chat interface
     │   ├── dashboard/                      # Visualization dashboard
     │   ├── map/                            # Geospatial exploration
@@ -913,6 +970,7 @@ floatchat/
     │   ├── login/ signup/                  # Auth pages
     │   └── forgot-password/ reset-password/
     ├── components/
+    │   ├── admin/                          # Admin dashboard cards including GDACSyncPanel
     │   ├── chat/                           # ChatMessage, AutocompleteInput, ClarificationWidget, SuggestedQueryGallery
     │   ├── visualization/                  # Chart and map components
     │   ├── map/                            # Geospatial map components
@@ -921,6 +979,7 @@ floatchat/
     │   └── layout/                         # SessionSidebar, LayoutShell
     ├── lib/
     │   ├── api.ts                          # Auth-aware API client
+    │   ├── adminQueries.ts                 # Admin dataset + GDAC endpoints client
     │   ├── queryTemplates.json             # Feature 9 template library
     │   ├── oceanTerms.json                 # Feature 9 autocomplete term dictionary
     │   ├── mapQueries.ts                   # Map endpoint client
@@ -1000,3 +1059,4 @@ floatchat/
 | v1.6 | Feature 15: Anomaly detection and review workflows |
 | v1.7 | Feature 9: Guided query assistant (gallery, autocomplete, clarification) |
 | v1.8 | Feature 10: Dataset management admin panel, notifications, and audit log |
+| v1.9 | Feature 10.6: GDAC auto-sync orchestration, admin trigger/history APIs, and admin dashboard integration |

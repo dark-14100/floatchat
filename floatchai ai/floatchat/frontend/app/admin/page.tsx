@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import GDACSyncPanel from "@/components/admin/GDACSyncPanel";
 import { getUnreviewedAnomalyCount } from "@/lib/anomalyQueries";
 import { listAdminDatasets, listAdminIngestionJobs, type AdminIngestionJob } from "@/lib/adminQueries";
 
@@ -117,11 +118,7 @@ export default function AdminOverviewPage() {
           <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Review in anomaly feed for triage.</p>
         </article>
 
-        <article className="rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] p-4">
-          <p className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">GDAC Sync</p>
-          <p className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">Not configured</p>
-          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Placeholder card for future auto-sync integration.</p>
-        </article>
+        <GDACSyncPanel />
       </div>
     </div>
   );

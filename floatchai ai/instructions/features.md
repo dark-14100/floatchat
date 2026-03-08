@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1-10, 13, 14, and 15 complete; roadmap features 11-12 are planned
+> **Status:** In Development — Features 1-10, 13, 14, and 15 complete, including GDAC auto-sync under Feature 10; roadmap features 11-12 are planned
 
 ---
 
@@ -43,6 +43,7 @@
 | 15 — Anomaly Detection | ✅ Complete |
 | 9 — Guided Query Assistant | ✅ Complete |
 | 10 — Dataset Management | ✅ Complete |
+| 10.6 — GDAC Auto-Sync | ✅ Complete |
 | 11 — API Layer | ⏳ Planned |
 | 12 — System Monitoring | ⏳ Planned |
 
@@ -753,6 +754,13 @@ Admin interface for uploading datasets, monitoring ingestion, managing metadata,
 - NL query schema guidance updated so generated SQL treats `deleted_at IS NULL` as active datasets
 - Shared notification module (`app/notifications`) is active for ingestion outcomes and anomaly stub forwarding
 
+#### 10.6 GDAC Auto-Sync (Automated External Data Intake)
+- Nightly scheduled GDAC sync task runs at 01:00 UTC via Celery beat (`run-gdac-sync-nightly`)
+- Admin trigger endpoint (`POST /api/v1/admin/gdac-sync/trigger`) launches manual sync with global cooldown window
+- Run history endpoints (`GET /api/v1/admin/gdac-sync/runs`, `GET /api/v1/admin/gdac-sync/runs/{run_id}`) expose status, counts, mirror used, and error details
+- Sync state checkpointing (`gdac_sync_state`) tracks last index date and completion timestamp
+- Download and notification failures are non-fatal; successful downloads continue ingest dispatch through existing ingestion pipeline (`source='gdac_sync'`)
+
 ### Tasks for Developers
 - [x] Build admin dashboard page (admin role protected)
 - [x] Build DatasetUploadPanel
@@ -761,6 +769,11 @@ Admin interface for uploading datasets, monitoring ingestion, managing metadata,
 - [x] Implement soft and hard delete endpoints
 - [x] Build audit log table and UI
 - [x] Set up email/Slack notifications
+- [x] Add GDAC sync run/state schema and ORM models
+- [x] Add Celery GDAC sync task wrapper + nightly beat schedule
+- [x] Add admin GDAC trigger and run-history APIs
+- [x] Add admin GDAC dashboard panel and `/admin/gdac-sync` run history page
+- [x] Add GDAC backend test coverage (index, downloader, sync orchestrator)
 
 ---
 
@@ -906,7 +919,7 @@ Operational reliability infrastructure for production deployment: structured log
   - 7-day trend chart of ingestion volume
   - Failed job rate over time
 - Slack alert on any ingestion failure (already triggered by Feature 10's notification module — confirm this is working and add a daily digest if not)
-- When GDAC auto-sync is built, its job metrics appear here automatically via the `source` column
+- GDAC auto-sync job metrics are available via the `source='gdac_sync'` ingestion job stream and can be surfaced in this monitoring section
 
 #### 12.5 Uptime Monitoring
 - Healthcheck endpoint: `GET /api/v1/health` — returns `{ "status": "ok", "db": "ok", "redis": "ok", "celery": "ok" }` with individual component checks

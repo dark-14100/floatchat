@@ -6,6 +6,8 @@ const API_V1 = `${API_BASE}/api/v1`;
 
 export type AdminIngestionStatus = "pending" | "running" | "succeeded" | "failed";
 export type AdminIngestionSource = "manual_upload" | "gdac_sync";
+export type GDACSyncStatus = "running" | "completed" | "failed" | "partial";
+export type GDACSyncTriggeredBy = "scheduled" | "manual";
 
 export interface AdminDataset {
   dataset_id: number;
@@ -49,6 +51,22 @@ export interface AdminIngestionJob {
   created_at: string | null;
 }
 
+export interface GDACSyncRun {
+  run_id: string;
+  started_at: string | null;
+  completed_at: string | null;
+  status: GDACSyncStatus;
+  index_profiles_found: number | null;
+  profiles_downloaded: number | null;
+  profiles_ingested: number | null;
+  profiles_skipped: number | null;
+  error_message: string | null;
+  gdac_mirror: string;
+  lookback_days: number;
+  triggered_by: GDACSyncTriggeredBy;
+  duration_seconds: number | null;
+}
+
 export interface AdminDatasetDetail extends AdminDataset {
   measurement_count: number;
   ingestion_job_history: AdminIngestionJob[];
@@ -64,6 +82,13 @@ export interface AdminDatasetsResponse {
 
 export interface AdminIngestionJobsResponse {
   jobs: AdminIngestionJob[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface GDACSyncRunsResponse {
+  runs: GDACSyncRun[];
   total: number;
   limit: number;
   offset: number;
@@ -106,6 +131,11 @@ export interface UploadAcceptedResponse {
   message: string;
 }
 
+export interface GDACSyncTriggerResponse {
+  run_id: string;
+  status: "queued";
+}
+
 export interface ListAdminDatasetsParams {
   include_deleted?: boolean;
   is_public?: boolean;
@@ -127,6 +157,13 @@ export interface ListAdminAuditLogParams {
   admin_user_id?: string;
   action?: string;
   entity_type?: string;
+  days?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListGDACSyncRunsParams {
+  status?: GDACSyncStatus;
   days?: number;
   limit?: number;
   offset?: number;
@@ -244,6 +281,28 @@ export async function listAdminAuditLog(
     offset: params.offset,
   });
   return apiFetch<AdminAuditLogResponse>(`/admin/audit-log${query}`);
+}
+
+export async function triggerGDACSync(): Promise<GDACSyncTriggerResponse> {
+  return apiFetch<GDACSyncTriggerResponse>("/admin/gdac-sync/trigger", {
+    method: "POST",
+  });
+}
+
+export async function listGDACSyncRuns(
+  params: ListGDACSyncRunsParams = {},
+): Promise<GDACSyncRunsResponse> {
+  const query = buildQuery({
+    status: params.status,
+    days: params.days,
+    limit: params.limit,
+    offset: params.offset,
+  });
+  return apiFetch<GDACSyncRunsResponse>(`/admin/gdac-sync/runs${query}`);
+}
+
+export async function getGDACSyncRunDetail(runId: string): Promise<GDACSyncRun> {
+  return apiFetch<GDACSyncRun>(`/admin/gdac-sync/runs/${encodeURIComponent(runId)}`);
 }
 
 export async function uploadDatasetFile(

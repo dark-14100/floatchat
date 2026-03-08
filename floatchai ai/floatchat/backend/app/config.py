@@ -160,6 +160,19 @@ class Settings(BaseSettings):
     NOTIFICATION_EMAIL_TO: Optional[str] = None  # Comma-separated recipients
     NOTIFICATION_SLACK_ENABLED: bool = False
     NOTIFICATION_SLACK_WEBHOOK_URL: Optional[str] = None
+
+    # =========================================================================
+    # GDAC Auto-Sync
+    # =========================================================================
+    GDAC_SYNC_ENABLED: bool = False
+    GDAC_PRIMARY_MIRROR: str = "https://data-argo.ifremer.fr"
+    GDAC_SECONDARY_MIRROR: str = "https://usgodae.org/ftp/outgoing/argo"
+    GDAC_LOOKBACK_DAYS: int = 30
+    GDAC_MAX_CONCURRENT_DOWNLOADS: int = 4
+    GDAC_DOWNLOAD_TIMEOUT_SECONDS: int = 30
+    GDAC_MIRROR_TIMEOUT_SECONDS: int = 10
+    GDAC_INDEX_BATCH_SIZE: int = 1000
+    GDAC_CONTACT_EMAIL: Optional[str] = None
     
     # Provider-specific API keys and base URLs
     DEEPSEEK_API_KEY: Optional[str] = None
