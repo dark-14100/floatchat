@@ -13,11 +13,13 @@ Dependencies:
 """
 
 from collections.abc import Generator
+import time
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
+from app.monitoring.metrics import current_endpoint, observe_db_query_duration
 
 # ============================================================================
 # Read-write engine (application via PgBouncer on port 5433)
@@ -56,6 +58,29 @@ ReadonlySessionLocal = sessionmaker(
     autoflush=False,
     expire_on_commit=False,
 )
+
+
+def _register_query_metrics(db_engine) -> None:
+    """Hook SQLAlchemy cursor events to emit DB query duration metrics."""
+
+    @event.listens_for(db_engine, "before_cursor_execute")
+    def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        del cursor, statement, parameters, context, executemany
+        conn.info.setdefault("query_start_time", []).append(time.perf_counter())
+
+    @event.listens_for(db_engine, "after_cursor_execute")
+    def _after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        del cursor, statement, parameters, context, executemany
+        stack = conn.info.get("query_start_time")
+        if not stack:
+            return
+        started_at = stack.pop()
+        elapsed = time.perf_counter() - started_at
+        observe_db_query_duration(elapsed, current_endpoint())
+
+
+_register_query_metrics(engine)
+_register_query_metrics(readonly_engine)
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -12,6 +12,7 @@ import { useAuthStore } from "@/store/authStore";
 import type { AuthResponse, User } from "@/types/auth";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const LOGIN_REQUEST_TIMEOUT_MS = 15000;
 
 function getLegacyUserId(): string {
   if (typeof window === "undefined") return "";
@@ -52,7 +53,13 @@ function LoginContent() {
   const [migrationNotice, setMigrationNotice] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const redirectTo = useMemo(() => searchParams.get("redirect") ?? "/chat", [searchParams]);
+  const redirectTo = useMemo(() => {
+    const rawRedirect = searchParams.get("redirect");
+    if (!rawRedirect) return "/chat";
+    if (!rawRedirect.startsWith("/")) return "/chat";
+    if (rawRedirect === "/" || rawRedirect.startsWith("//")) return "/chat";
+    return rawRedirect;
+  }, [searchParams]);
 
   useEffect(() => {
     if (searchParams.get("message") === "password-updated") {
@@ -67,10 +74,14 @@ function LoginContent() {
     setMigrationNotice(null);
     setIsSubmitting(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_REQUEST_TIMEOUT_MS);
+
     try {
       const response = await fetch(`${API_BASE}/api/v1/auth/login`, {
         method: "POST",
         credentials: "include",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           "X-User-ID": getLegacyUserId(),
@@ -95,9 +106,14 @@ function LoginContent() {
       }
 
       router.push(redirectTo);
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Sign in timed out. Check that the backend is running and try again.");
+        return;
+      }
       setError("Unable to sign in right now. Please try again.");
     } finally {
+      clearTimeout(timeoutId);
       setIsSubmitting(false);
     }
   };

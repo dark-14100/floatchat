@@ -3,13 +3,12 @@ import { NextRequest } from "next/server";
 import { middleware } from "@/middleware";
 
 describe("frontend middleware", () => {
-  it("redirects unauthenticated protected route access to /login with redirect param", () => {
+  it("allows unauthenticated protected route access for client-side auth bootstrap", () => {
     const request = new NextRequest("http://localhost/chat");
 
     const response = middleware(request);
 
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe("http://localhost/login?redirect=%2Fchat");
+    expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
   it("redirects authenticated users away from /login to /chat", () => {

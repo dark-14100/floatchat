@@ -1,0 +1,297 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.7, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\Vishnu S\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\Vishnu S\OneDrive\Documents\Desktop\floatchat\floatchai ai\floatchat\backend
+plugins: anyio-4.12.0, asyncio-1.3.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 40 items
+
+tests/test_chat_api.py::TestCreateSession::test_creates_session_with_name ERROR [  2%]
+tests/test_chat_api.py::TestCreateSession::test_creates_session_without_name ERROR [  5%]
+tests/test_chat_api.py::TestCreateSession::test_session_id_is_valid_uuid ERROR [  7%]
+tests/test_chat_api.py::TestListSessions::test_lists_empty ERROR         [ 10%]
+tests/test_chat_api.py::TestListSessions::test_lists_created_session ERROR [ 12%]
+tests/test_chat_api.py::TestListSessions::test_user_isolation ERROR      [ 15%]
+tests/test_chat_api.py::TestListSessions::test_ordered_by_last_active_desc ERROR [ 17%]
+tests/test_chat_api.py::TestGetSession::test_get_existing_session ERROR  [ 20%]
+tests/test_chat_api.py::TestGetSession::test_get_nonexistent_session_returns_404 ERROR [ 22%]
+tests/test_chat_api.py::TestGetSession::test_get_invalid_uuid_returns_400 ERROR [ 25%]
+tests/test_chat_api.py::TestRenameSession::test_rename_session ERROR     [ 27%]
+tests/test_chat_api.py::TestRenameSession::test_rename_nonexistent_returns_404 ERROR [ 30%]
+tests/test_chat_api.py::TestRenameSession::test_rename_empty_name_returns_422 ERROR [ 32%]
+tests/test_chat_api.py::TestDeleteSession::test_soft_delete ERROR        [ 35%]
+tests/test_chat_api.py::TestDeleteSession::test_get_deleted_session_returns_404 ERROR [ 37%]
+tests/test_chat_api.py::TestDeleteSession::test_delete_nonexistent_returns_404 ERROR [ 40%]
+tests/test_chat_api.py::TestGetMessages::test_empty_messages ERROR       [ 42%]
+tests/test_chat_api.py::TestGetMessages::test_returns_persisted_messages ERROR [ 45%]
+tests/test_chat_api.py::TestGetMessages::test_message_limit ERROR        [ 47%]
+tests/test_chat_api.py::TestGetMessages::test_invalid_session_returns_404 ERROR [ 50%]
+tests/test_chat_api.py::TestQuerySSE::test_full_success_event_sequence ERROR [ 52%]
+tests/test_chat_api.py::TestQuerySSE::test_pipeline_error_emits_error_event ERROR [ 55%]
+tests/test_chat_api.py::TestQuerySSE::test_awaiting_confirmation_for_large_results ERROR [ 57%]
+tests/test_chat_api.py::TestQuerySSE::test_confirm_flag_bypasses_threshold ERROR [ 60%]
+tests/test_chat_api.py::TestQuerySSE::test_execution_error_emits_error_event ERROR [ 62%]
+tests/test_chat_api.py::TestQuerySSE::test_query_nonexistent_session_returns_404 ERROR [ 65%]
+tests/test_chat_api.py::TestQuerySSE::test_query_empty_string_returns_422 ERROR [ 67%]
+tests/test_chat_api.py::TestQuerySSE::test_messages_persisted_after_query ERROR [ 70%]
+tests/test_chat_api.py::TestConfirmQuery::test_confirm_executes_stored_sql ERROR [ 72%]
+tests/test_chat_api.py::TestConfirmQuery::test_confirm_execution_error ERROR [ 75%]
+tests/test_chat_api.py::TestConfirmQuery::test_confirm_nonexistent_message_returns_404 ERROR [ 77%]
+tests/test_chat_api.py::TestConfirmQuery::test_confirm_invalid_message_id_returns_400 ERROR [ 80%]
+tests/test_chat_api.py::TestConfirmQuery::test_confirm_nonexistent_session_returns_404 ERROR [ 82%]
+tests/test_chat_api.py::TestSuggestionsEndpoint::test_returns_suggestions ERROR [ 85%]
+tests/test_chat_api.py::TestSuggestionsEndpoint::test_returns_fallbacks_on_empty ERROR [ 87%]
+tests/test_chat_api.py::TestSSEHelpers::test_sse_event_format PASSED     [ 90%]
+tests/test_chat_api.py::TestSSEHelpers::test_build_interpretation_preview_count PASSED [ 92%]
+tests/test_chat_api.py::TestSSEHelpers::test_build_interpretation_preview_average PASSED [ 95%]
+tests/test_chat_api.py::TestSSEHelpers::test_build_interpretation_preview_show PASSED [ 97%]
+tests/test_chat_api.py::TestSSEHelpers::test_build_interpretation_preview_default PASSED [100%]
+
+=================================== ERRORS ====================================
+_____ ERROR at setup of TestCreateSession.test_creates_session_with_name ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____ ERROR at setup of TestCreateSession.test_creates_session_without_name ____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+______ ERROR at setup of TestCreateSession.test_session_id_is_valid_uuid ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____________ ERROR at setup of TestListSessions.test_lists_empty _____________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+________ ERROR at setup of TestListSessions.test_lists_created_session ________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+___________ ERROR at setup of TestListSessions.test_user_isolation ____________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestListSessions.test_ordered_by_last_active_desc _____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_________ ERROR at setup of TestGetSession.test_get_existing_session __________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+__ ERROR at setup of TestGetSession.test_get_nonexistent_session_returns_404 __
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestGetSession.test_get_invalid_uuid_returns_400 ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+___________ ERROR at setup of TestRenameSession.test_rename_session ___________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+___ ERROR at setup of TestRenameSession.test_rename_nonexistent_returns_404 ___
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+___ ERROR at setup of TestRenameSession.test_rename_empty_name_returns_422 ____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____________ ERROR at setup of TestDeleteSession.test_soft_delete _____________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+__ ERROR at setup of TestDeleteSession.test_get_deleted_session_returns_404 ___
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+___ ERROR at setup of TestDeleteSession.test_delete_nonexistent_returns_404 ___
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____________ ERROR at setup of TestGetMessages.test_empty_messages ____________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+______ ERROR at setup of TestGetMessages.test_returns_persisted_messages ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____________ ERROR at setup of TestGetMessages.test_message_limit _____________
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestGetMessages.test_invalid_session_returns_404 ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_______ ERROR at setup of TestQuerySSE.test_full_success_event_sequence _______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____ ERROR at setup of TestQuerySSE.test_pipeline_error_emits_error_event _____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_ ERROR at setup of TestQuerySSE.test_awaiting_confirmation_for_large_results _
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestQuerySSE.test_confirm_flag_bypasses_threshold _____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+____ ERROR at setup of TestQuerySSE.test_execution_error_emits_error_event ____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+__ ERROR at setup of TestQuerySSE.test_query_nonexistent_session_returns_404 __
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestQuerySSE.test_query_empty_string_returns_422 ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestQuerySSE.test_messages_persisted_after_query ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestConfirmQuery.test_confirm_executes_stored_sql _____
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_______ ERROR at setup of TestConfirmQuery.test_confirm_execution_error _______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_ ERROR at setup of TestConfirmQuery.test_confirm_nonexistent_message_returns_404 _
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_ ERROR at setup of TestConfirmQuery.test_confirm_invalid_message_id_returns_400 _
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_ ERROR at setup of TestConfirmQuery.test_confirm_nonexistent_session_returns_404 _
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+_____ ERROR at setup of TestSuggestionsEndpoint.test_returns_suggestions ______
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+__ ERROR at setup of TestSuggestionsEndpoint.test_returns_fallbacks_on_empty __
+tests\test_chat_api.py:42: in chat_client
+    from app.main import app
+app\main.py:20: in <module>
+    from slowapi.errors import RateLimitExceeded
+E   ModuleNotFoundError: No module named 'slowapi'
+=========================== short test summary info ===========================
+ERROR tests/test_chat_api.py::TestCreateSession::test_creates_session_with_name
+ERROR tests/test_chat_api.py::TestCreateSession::test_creates_session_without_name
+ERROR tests/test_chat_api.py::TestCreateSession::test_session_id_is_valid_uuid
+ERROR tests/test_chat_api.py::TestListSessions::test_lists_empty - ModuleNotF...
+ERROR tests/test_chat_api.py::TestListSessions::test_lists_created_session - ...
+ERROR tests/test_chat_api.py::TestListSessions::test_user_isolation - ModuleN...
+ERROR tests/test_chat_api.py::TestListSessions::test_ordered_by_last_active_desc
+ERROR tests/test_chat_api.py::TestGetSession::test_get_existing_session - Mod...
+ERROR tests/test_chat_api.py::TestGetSession::test_get_nonexistent_session_returns_404
+ERROR tests/test_chat_api.py::TestGetSession::test_get_invalid_uuid_returns_400
+ERROR tests/test_chat_api.py::TestRenameSession::test_rename_session - Module...
+ERROR tests/test_chat_api.py::TestRenameSession::test_rename_nonexistent_returns_404
+ERROR tests/test_chat_api.py::TestRenameSession::test_rename_empty_name_returns_422
+ERROR tests/test_chat_api.py::TestDeleteSession::test_soft_delete - ModuleNot...
+ERROR tests/test_chat_api.py::TestDeleteSession::test_get_deleted_session_returns_404
+ERROR tests/test_chat_api.py::TestDeleteSession::test_delete_nonexistent_returns_404
+ERROR tests/test_chat_api.py::TestGetMessages::test_empty_messages - ModuleNo...
+ERROR tests/test_chat_api.py::TestGetMessages::test_returns_persisted_messages
+ERROR tests/test_chat_api.py::TestGetMessages::test_message_limit - ModuleNot...
+ERROR tests/test_chat_api.py::TestGetMessages::test_invalid_session_returns_404
+ERROR tests/test_chat_api.py::TestQuerySSE::test_full_success_event_sequence
+ERROR tests/test_chat_api.py::TestQuerySSE::test_pipeline_error_emits_error_event
+ERROR tests/test_chat_api.py::TestQuerySSE::test_awaiting_confirmation_for_large_results
+ERROR tests/test_chat_api.py::TestQuerySSE::test_confirm_flag_bypasses_threshold
+ERROR tests/test_chat_api.py::TestQuerySSE::test_execution_error_emits_error_event
+ERROR tests/test_chat_api.py::TestQuerySSE::test_query_nonexistent_session_returns_404
+ERROR tests/test_chat_api.py::TestQuerySSE::test_query_empty_string_returns_422
+ERROR tests/test_chat_api.py::TestQuerySSE::test_messages_persisted_after_query
+ERROR tests/test_chat_api.py::TestConfirmQuery::test_confirm_executes_stored_sql
+ERROR tests/test_chat_api.py::TestConfirmQuery::test_confirm_execution_error
+ERROR tests/test_chat_api.py::TestConfirmQuery::test_confirm_nonexistent_message_returns_404
+ERROR tests/test_chat_api.py::TestConfirmQuery::test_confirm_invalid_message_id_returns_400
+ERROR tests/test_chat_api.py::TestConfirmQuery::test_confirm_nonexistent_session_returns_404
+ERROR tests/test_chat_api.py::TestSuggestionsEndpoint::test_returns_suggestions
+ERROR tests/test_chat_api.py::TestSuggestionsEndpoint::test_returns_fallbacks_on_empty
+======================== 5 passed, 35 errors in 9.70s =========================

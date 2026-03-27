@@ -280,7 +280,7 @@ def discover_floats_by_variable(
 # ── Dataset Summaries ─────────────────────────────────────────────────────
 
 
-def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
+def get_dataset_summary(dataset_id: int, db: Session, public_only: bool = False) -> dict[str, Any]:
     """
     Return a rich summary for a single dataset (FR-22).
 
@@ -313,6 +313,9 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
 
     if getattr(dataset, "deleted_at", None) is not None:
         raise ValueError(f"Dataset is soft-deleted: {dataset_id}")
+
+    if public_only and not dataset.is_public:
+        raise ValueError(f"Dataset not found: {dataset_id}")
 
     # Convert bbox to GeoJSON if present
     bbox_geojson = None
@@ -351,7 +354,7 @@ def get_dataset_summary(dataset_id: int, db: Session) -> dict[str, Any]:
     return result
 
 
-def get_all_summaries(db: Session) -> list[dict[str, Any]]:
+def get_all_summaries(db: Session, public_only: bool = False) -> list[dict[str, Any]]:
     """
     Return lightweight summary cards for all active, non-deleted datasets (FR-23).
 
@@ -373,6 +376,8 @@ def get_all_summaries(db: Session) -> list[dict[str, Any]]:
         .where(Dataset.deleted_at.is_(None))
         .order_by(Dataset.ingestion_date.desc())
     )
+    if public_only:
+        stmt = stmt.where(Dataset.is_public.is_(True))
     datasets = db.execute(stmt).scalars().all()
 
     results = []

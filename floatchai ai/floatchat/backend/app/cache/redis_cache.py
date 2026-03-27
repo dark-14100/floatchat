@@ -18,6 +18,7 @@ import structlog
 from redis import Redis
 
 from app.config import get_settings
+from app.monitoring.metrics import record_cache_hit, record_cache_miss
 
 logger = structlog.get_logger(__name__)
 
@@ -50,9 +51,11 @@ def get_cached_result(sql_string: str, redis_client: Redis) -> Optional[list[dic
 
     if raw is None:
         logger.debug("cache_miss", key=key)
+        record_cache_miss("query_result")
         return None
 
     logger.debug("cache_hit", key=key)
+    record_cache_hit("query_result")
     return json.loads(raw)
 
 

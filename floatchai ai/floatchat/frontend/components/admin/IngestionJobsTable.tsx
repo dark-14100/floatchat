@@ -18,6 +18,8 @@ type ReviewedSource = "all" | AdminIngestionSource;
 
 interface IngestionJobsTableProps {
   focusJobId?: string | null;
+  initialDays?: number;
+  onDaysChange?: (days: number) => void;
 }
 
 function formatDate(value: string | null): string {
@@ -52,12 +54,16 @@ function toIngestionJob(payload: AdminIngestionStreamPayload): AdminIngestionJob
   };
 }
 
-export default function IngestionJobsTable({ focusJobId }: IngestionJobsTableProps) {
+export default function IngestionJobsTable({
+  focusJobId,
+  initialDays = 7,
+  onDaysChange,
+}: IngestionJobsTableProps) {
   const [jobs, setJobs] = useState<AdminIngestionJob[]>([]);
   const [total, setTotal] = useState(0);
   const [limit] = useState(50);
   const [offset, setOffset] = useState(0);
-  const [days, setDays] = useState(7);
+  const [days, setDays] = useState(initialDays);
   const [statusFilter, setStatusFilter] = useState<ReviewedStatus>("all");
   const [sourceFilter, setSourceFilter] = useState<ReviewedSource>("all");
   const [loading, setLoading] = useState(true);
@@ -92,6 +98,10 @@ export default function IngestionJobsTable({ focusJobId }: IngestionJobsTablePro
   useEffect(() => {
     void fetchJobs();
   }, [fetchJobs]);
+
+  useEffect(() => {
+    onDaysChange?.(days);
+  }, [days, onDaysChange]);
 
   const matchesFilters = useCallback(
     (job: AdminIngestionJob) => {
@@ -213,7 +223,8 @@ export default function IngestionJobsTable({ focusJobId }: IngestionJobsTablePro
             value={days}
             onChange={(e) => {
               setOffset(0);
-              setDays(Number(e.target.value));
+              const nextDays = Number(e.target.value);
+              setDays(nextDays);
             }}
             className="rounded border border-[var(--color-border-default)] bg-[var(--color-bg-base)] px-2 py-1 text-xs"
           >

@@ -1,7 +1,5 @@
 """Feature 8 Data Export API router."""
 
-from __future__ import annotations
-
 import gzip
 import json
 import uuid
@@ -10,17 +8,17 @@ from io import BytesIO
 from typing import Any, Literal, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_api_key_or_user
 from app.config import get_settings
-from app.db.models import ChatMessage, ChatSession, User
-from app.db.session import get_db
+from app.db.models import ApiKey, ChatMessage, ChatSession, User
+from app.db.session import SessionLocal, get_db
 from app.export import (
     estimate_export_size_bytes,
     generate_csv,
@@ -29,10 +27,28 @@ from app.export import (
     should_use_async_export,
 )
 from app.export.tasks import generate_export_task
+from app.rate_limiter import limiter
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/export", tags=["Export"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/export", tags=["Export"], dependencies=[Depends(get_api_key_or_user)])
+
+
+def _export_rate_limit(key: str) -> str:
+    settings = get_settings()
+    if isinstance(key, str) and key.startswith("apikey:"):
+        api_key_id = key.split(":", 1)[1]
+        db = SessionLocal()
+        try:
+            api_key = db.scalar(select(ApiKey).where(ApiKey.key_id == uuid.UUID(api_key_id)))
+            if api_key and api_key.rate_limit_override:
+                return f"{int(api_key.rate_limit_override)}/minute"
+        except Exception:
+            pass
+        finally:
+            db.close()
+        return f"{settings.API_KEY_RATE_LIMIT_PER_MINUTE}/minute"
+    return f"{settings.JWT_RATE_LIMIT_PER_MINUTE}/minute"
 
 
 class ExportFilters(BaseModel):
@@ -175,15 +191,17 @@ def _generate_export_bytes(
         413: {"model": ExportErrorResponse},
     },
 )
+@limiter.limit(_export_rate_limit)
 def create_export(
-    request: ExportRequest,
+    request: Request,
+    payload: ExportRequest = Body(...),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_api_key_or_user),
 ):
     settings = get_settings()
 
     try:
-        message_uuid = uuid.UUID(request.message_id)
+        message_uuid = uuid.UUID(payload.message_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid message_id format")
 
@@ -208,13 +226,13 @@ def create_export(
     metadata_row_count = int(metadata.get("row_count") or 0)
     metadata_columns = metadata.get("columns") or []
 
-    if metadata_row_count <= 0 or not request.rows:
+    if metadata_row_count <= 0 or not payload.rows:
         raise HTTPException(
             status_code=410,
             detail="Export data has expired. Please re-run your query and try again.",
         )
 
-    rows = list(request.rows)
+    rows = list(payload.rows)
     columns = [str(column) for column in metadata_columns] or list(rows[0].keys())
 
     try:
@@ -225,13 +243,13 @@ def create_export(
             detail=f"Rows are not JSON-serializable: {exc}",
         )
 
-    rows, columns = _apply_filters(rows, columns, request.filters)
+    rows, columns = _apply_filters(rows, columns, payload.filters)
     row_count = len(rows)
 
     estimated_size = estimate_export_size_bytes(
         row_count=row_count,
         column_count=len(columns),
-        export_format=request.format,
+        export_format=payload.format,
     )
 
     max_size_bytes = settings.EXPORT_MAX_SIZE_MB * 1024 * 1024
@@ -249,29 +267,29 @@ def create_export(
     use_async = should_use_async_export(
         row_count=row_count,
         column_count=len(columns),
-        export_format=request.format,
+        export_format=payload.format,
         sync_limit_mb=settings.EXPORT_SYNC_SIZE_LIMIT_MB,
     )
 
     if not use_async:
-        payload = _generate_export_bytes(
-            export_format=request.format,
+        export_bytes = _generate_export_bytes(
+            export_format=payload.format,
             rows=rows,
             columns=columns,
             nl_query=nl_query,
         )
 
         headers = {
-            "Content-Disposition": f'attachment; filename="{_build_filename(request.format)}"',
+            "Content-Disposition": f'attachment; filename="{_build_filename(payload.format)}"',
         }
 
-        if request.format in {"csv", "json"}:
-            payload = gzip.compress(payload)
+        if payload.format in {"csv", "json"}:
+            export_bytes = gzip.compress(export_bytes)
             headers["Content-Encoding"] = "gzip"
 
         return StreamingResponse(
-            BytesIO(payload),
-            media_type=_content_type(request.format),
+            BytesIO(export_bytes),
+            media_type=_content_type(payload.format),
             headers=headers,
         )
 
@@ -290,7 +308,7 @@ def create_export(
 
     generate_export_task.delay(
         task_id=task_id,
-        export_format=request.format,
+        export_format=payload.format,
         columns=columns,
         nl_query=nl_query,
         user_id=str(current_user.user_id),
@@ -304,10 +322,13 @@ def create_export(
 
 
 @router.get("/status/{task_id}", response_model=ExportStatusResponse)
+@limiter.limit(_export_rate_limit)
 def export_status(
+    request: Request,
     task_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_api_key_or_user),
 ):
+    del request
     del current_user
 
     redis_client = _get_redis_client()

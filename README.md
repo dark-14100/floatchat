@@ -15,6 +15,7 @@ FloatChat lets researchers, climate analysts, and students explore ARGO ocean da
 - [Architecture](#architecture)
 - [Features](#features)
 - [API Reference](#api-reference)
+- [Monitoring Operations](#monitoring-operations)
 - [Database Schema](#database-schema)
 - [Environment Variables](#environment-variables)
 - [Running Tests](#running-tests)
@@ -388,6 +389,76 @@ Automated ingestion path for recently updated ARGO profiles from GDAC mirrors.
 | Run history | `gdac_sync_runs` records status, counts, mirror, lookback window, and errors |
 | Safe ingestion handoff | Downloaded profiles enqueue through existing ingestion pipeline with `source='gdac_sync'` |
 | Failure handling | Task wrapper is non-raising; download/notification issues do not abort whole run |
+
+---
+
+### Feature 11 - API Layer 🚧
+
+Public API access is now available through API keys in addition to JWT bearer tokens.
+
+What is currently implemented:
+
+| Capability | Behavior |
+|---|---|
+| API key lifecycle | Authenticated users can create, list, rename, and revoke API keys under `/api/v1/auth/api-keys` |
+| Secret handling | Plaintext key is returned once at creation; only SHA-256 hash is stored server-side |
+| Public endpoint auth | `/query`, `/map`, `/export`, `/anomalies`, and search dataset routes accept `X-API-Key` |
+| Public data scope | API-key-authenticated requests are scoped to public datasets (`datasets.is_public = true`) |
+| Identity rate limiting | Limits are keyed by user or API key identity (not IP), with per-key override support |
+| API docs exposure | `/docs` and `/redoc` are publicly available |
+
+Feature 11 auth usage:
+
+| Method | Header | Example |
+|---|---|---|
+| JWT | `Authorization: Bearer <access_token>` | Browser/user sessions |
+| API key | `X-API-Key: fck_...` | External scripts and integrations |
+
+API key management endpoints at `/api/v1/auth/`:
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api-keys` | Create key (`name`), returns plaintext key once |
+| GET | `/api-keys` | List keys (no key hash/secret returned) |
+| PATCH | `/api-keys/{key_id}` | Rename key; admins can set `rate_limit_override` |
+| DELETE | `/api-keys/{key_id}` | Revoke key (soft deactivate) |
+
+Rate limits:
+
+| Identity | Default |
+|---|---|
+| JWT user | 300 requests/minute |
+| API key | 100 requests/minute |
+| API key with override | `rate_limit_override` requests/minute |
+
+---
+
+### Feature 12 - System Monitoring ✅
+
+System monitoring is implemented across backend, frontend, and ops artifacts.
+
+**What is implemented:**
+
+| Capability | Behavior |
+|---|---|
+| Backend Sentry | `init_sentry()` is DSN-gated (`SENTRY_DSN_BACKEND`, legacy `SENTRY_DSN` fallback) and non-fatal when absent |
+| Frontend Sentry | `@sentry/nextjs` wiring for client/server/edge with graceful no-op when DSN is unset |
+| Prometheus metrics | `/metrics` exposed with FastAPI instrumentator and custom FloatChat metrics |
+| Health endpoint | `GET /api/v1/health` returns component-aware status for DB/Redis/Celery with timeout budget |
+| Ingestion digest | Daily digest task runs at 07:00 UTC for the previous UTC day and sends Slack/email digest payloads |
+| Admin monitoring APIs/UI | Aggregates via `/api/v1/admin/ingestion/summary` and `/api/v1/admin/ingestion/trend`, surfaced on admin ingestion page |
+| Observability artifacts | Grafana dashboard JSON and Prometheus alert rules included under `monitoring/` |
+
+**Monitoring endpoints:**
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/health` | Component-aware health check (`ok`/`degraded`/`error`) |
+| GET | `/metrics` | Prometheus scrape endpoint |
+
+**Production note:**
+- Keep `/metrics` on an internal network path only (do not expose publicly).
+- `monitoring/prometheus/alerts.yml` is documentation-only in v1 until an Alertmanager receiver route is provisioned.
 
 ---
 

@@ -18,6 +18,7 @@ from app.celery_app import celery
 from app.config import settings
 from app.db.models import Anomaly, Profile
 from app.db.session import SessionLocal
+from app.monitoring.metrics import set_anomaly_scan_duration
 from app.notifications.sender import notify
 
 logger = structlog.get_logger(__name__)
@@ -194,6 +195,7 @@ def run_anomaly_scan(self) -> dict[str, Any]:
             severity=severity_counts,
             window_hours=settings.ANOMALY_SCAN_WINDOW_HOURS,
         )
+        set_anomaly_scan_duration(max((datetime.now(UTC) - started_at).total_seconds(), 0.0))
 
         return {
             "success": True,
@@ -207,6 +209,7 @@ def run_anomaly_scan(self) -> dict[str, Any]:
     except Exception as exc:
         db.rollback()
         logger.error("anomaly_scan_failed", error=str(exc))
+        set_anomaly_scan_duration(max((datetime.now(UTC) - started_at).total_seconds(), 0.0))
         return {
             "success": False,
             "scan_enabled": bool(settings.ANOMALY_SCAN_ENABLED),

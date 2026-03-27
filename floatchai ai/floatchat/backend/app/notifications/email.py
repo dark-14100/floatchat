@@ -49,6 +49,29 @@ def _build_message(event: str, context: dict[str, Any]) -> tuple[str, str]:
         body = f"Anomaly scan detected {anomaly_count} new anomalies.\n"
         return subject, body
 
+    if event == "ingestion_daily_digest":
+        target_date = str(context.get("target_date") or "unknown")
+        total_profiles = context.get("total_profiles_ingested", 0)
+        new_floats = context.get("new_floats_discovered", 0)
+        failed_count = context.get("failed_jobs_count", 0)
+        gdac_status = str(context.get("gdac_sync_status") or "not_run")
+        failed_names = context.get("failed_job_names") or []
+
+        subject = f"[FloatChat] Daily Ingestion Digest: {target_date}"
+        body = (
+            "Ingestion daily digest (previous UTC day).\n\n"
+            f"Date: {target_date} UTC\n"
+            f"Profiles ingested: {total_profiles}\n"
+            f"New floats discovered: {new_floats}\n"
+            f"Failed jobs: {failed_count}\n"
+            f"GDAC sync status: {gdac_status}\n"
+        )
+        if failed_names:
+            body += "\nFailed job files:\n"
+            body += "\n".join(f"- {name}" for name in failed_names)
+            body += "\n"
+        return subject, body
+
     subject = f"[FloatChat] Notification: {event}"
     body = f"Event: {event}\nContext: {context}\n"
     return subject, body

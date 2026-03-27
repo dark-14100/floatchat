@@ -7,6 +7,7 @@ All settings are validated on application startup.
 
 from functools import lru_cache
 from typing import Optional
+import warnings
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +57,13 @@ class Settings(BaseSettings):
     REDIS_CACHE_MAX_ROWS: int = 10000  # Do not cache results larger than this
     
     # =========================================================================
+    # API Layer Rate Limiting (Feature 11)
+    # =========================================================================
+    API_KEY_RATE_LIMIT_PER_MINUTE: int = 100
+    JWT_RATE_LIMIT_PER_MINUTE: int = 300
+    RATE_LIMIT_STORAGE_URI: Optional[str] = None
+    
+    # =========================================================================
     # S3 / MinIO Object Storage
     # =========================================================================
     S3_ENDPOINT_URL: Optional[str] = None  # Set for MinIO, leave None for AWS S3
@@ -91,7 +99,16 @@ class Settings(BaseSettings):
     # =========================================================================
     # Monitoring
     # =========================================================================
+    LOG_SINK: str = "stdout"  # stdout | loki | cloudwatch
+    LOG_RETENTION_DAYS: int = 30
+    LOKI_URL: Optional[str] = None
+    LOG_GROUP: Optional[str] = None
+    LOG_STREAM: Optional[str] = None
+    SENTRY_DSN_BACKEND: Optional[str] = None
     SENTRY_DSN: Optional[str] = None  # Optional - disabled if not set
+    ENVIRONMENT: str = "development"
+    APP_VERSION: str = "unknown"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.0
     
     # =========================================================================
     # Metadata Search Engine (Feature 3)
@@ -225,6 +242,22 @@ class Settings(BaseSettings):
         if not value or len(value.strip()) < 32:
             raise ValueError("JWT_SECRET_KEY must be set and be at least 32 characters long")
         return value
+
+    @property
+    def effective_sentry_dsn_backend(self) -> Optional[str]:
+        """Return canonical backend DSN, falling back to legacy alias with deprecation warning."""
+        if self.SENTRY_DSN_BACKEND:
+            return self.SENTRY_DSN_BACKEND
+
+        if self.SENTRY_DSN:
+            warnings.warn(
+                "SENTRY_DSN is deprecated; use SENTRY_DSN_BACKEND instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return self.SENTRY_DSN
+
+        return None
 
 
 @lru_cache

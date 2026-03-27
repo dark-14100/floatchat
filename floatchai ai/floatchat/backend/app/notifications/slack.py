@@ -29,6 +29,22 @@ def _build_text(event: str, context: dict[str, Any]) -> str:
         anomaly_count = context.get("anomaly_count", 0)
         return f"Anomaly scan detected {anomaly_count} new anomalies"
 
+    if event == "ingestion_daily_digest":
+        target_date = str(context.get("target_date") or "unknown")
+        total_profiles = context.get("total_profiles_ingested", 0)
+        new_floats = context.get("new_floats_discovered", 0)
+        failed_count = context.get("failed_jobs_count", 0)
+        gdac_status = str(context.get("gdac_sync_status") or "not_run")
+        failed_names = context.get("failed_job_names") or []
+        failed_preview = ", ".join(str(item) for item in failed_names[:5])
+        if not failed_preview:
+            failed_preview = "none"
+        return (
+            f"Daily ingestion digest ({target_date} UTC): "
+            f"profiles={total_profiles}, new_floats={new_floats}, "
+            f"failed_jobs={failed_count} [{failed_preview}], gdac={gdac_status}"
+        )
+
     return f"Notification event: {event}"
 
 

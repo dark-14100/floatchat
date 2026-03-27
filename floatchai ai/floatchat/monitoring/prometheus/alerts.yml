@@ -1,0 +1,26 @@
+# FloatChat Prometheus alerts (Feature 12)
+# NOTE: Receiver wiring is documentation-only in v1; Alertmanager route/receiver
+# integration must be configured separately in deployment runbooks.
+
+groups:
+  - name: floatchat-api-latency
+    interval: 30s
+    rules:
+      - alert: FloatchatQueryP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(http_request_duration_seconds_bucket{handler="/api/v1/query",method="POST"}[2m])
+            )
+          ) > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: floatchat-backend
+          team: platform
+        annotations:
+          summary: "FloatChat query p95 latency is above 5s"
+          description: "POST /api/v1/query p95 latency is {{ $value }}s for more than 2 minutes."
+          grafana_dashboard: "https://grafana.example.com/d/floatchat-observability/floatchat-observability"
+          runbook: "See Feature 12 runbook for mitigation and receiver setup (v1 receiver is documentation-only)."

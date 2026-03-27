@@ -12,10 +12,14 @@ Usage:
     celery -A app.celery_app.celery beat --loglevel=info
 """
 
+import time
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_postrun, task_prerun
 
 from app.config import settings
+from app.monitoring.metrics import observe_celery_task_duration
 
 # Create Celery app
 celery = Celery(
@@ -29,6 +33,7 @@ celery = Celery(
         "app.anomaly.tasks",
         "app.admin.tasks",
         "app.gdac.tasks",
+        "app.monitoring.digest",
     ],  # Auto-discover tasks modules
 )
 
@@ -67,6 +72,7 @@ celery.conf.update(
         "app.admin.tasks.hard_delete_dataset_task": {"queue": "default"},
         "app.admin.tasks.regenerate_summary_task": {"queue": "default"},
         "app.gdac.tasks.run_gdac_sync_task": {"queue": "default"},
+        "app.monitoring.digest.send_ingestion_digest_task": {"queue": "default"},
     },
     
     # Task default queue
@@ -96,6 +102,11 @@ celery.conf.update(
         "run-anomaly-scan-nightly": {
             "task": "app.anomaly.tasks.run_anomaly_scan",
             "schedule": crontab(hour=2, minute=0),
+        },
+        # Daily ingestion digest for previous UTC day (Feature 12)
+        "send-ingestion-digest-daily": {
+            "task": "app.monitoring.digest.send_ingestion_digest_task",
+            "schedule": crontab(hour=7, minute=0),
         },
     },
 )
@@ -128,3 +139,24 @@ def configure_celery_logging():
 
 # Apply logging config when module loads
 configure_celery_logging()
+
+
+_task_started_at: dict[str, float] = {}
+
+
+@task_prerun.connect
+def _record_task_start(task_id=None, task=None, **_kwargs):
+    if task_id is None:
+        return
+    _task_started_at[task_id] = time.perf_counter()
+
+
+@task_postrun.connect
+def _record_task_duration(task_id=None, task=None, **_kwargs):
+    if task_id is None:
+        return
+    started = _task_started_at.pop(task_id, None)
+    if started is None:
+        return
+    task_name = getattr(task, "name", "unknown") if task is not None else "unknown"
+    observe_celery_task_duration(max(time.perf_counter() - started, 0.0), task_name)

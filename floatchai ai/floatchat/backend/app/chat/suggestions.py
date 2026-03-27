@@ -19,6 +19,7 @@ import structlog
 from redis import Redis
 from sqlalchemy.orm import Session
 
+from app.monitoring.metrics import record_cache_hit, record_cache_miss
 from app.search.discovery import get_all_summaries
 
 log = structlog.get_logger(__name__)
@@ -80,7 +81,9 @@ def generate_load_time_suggestions(
             if cached:
                 suggestions = json.loads(cached)
                 log.debug("suggestions_cache_hit", count=len(suggestions))
+                record_cache_hit("chat_suggestions")
                 return suggestions
+            record_cache_miss("chat_suggestions")
         except Exception as exc:
             log.warning("suggestions_cache_read_failed", error=str(exc))
 

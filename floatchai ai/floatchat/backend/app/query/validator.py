@@ -218,3 +218,42 @@ def _check_geography_casts(tree: expressions.Expression) -> list[str]:
                 )
 
     return warnings
+
+
+def enforce_public_dataset_scope(sql: str) -> ValidationResult:
+    """
+    Enforce datasets.is_public = true when the query references datasets.
+
+    This is an additional security check used for API-key-scoped requests.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql, dialect="postgres")
+    except sqlglot.errors.ParseError as exc:
+        return ValidationResult(
+            valid=False,
+            error=f"SQL syntax error while applying dataset scope: {exc}",
+            check_failed="syntax",
+        )
+
+    referenced_tables: set[str] = set()
+    for table_node in parsed.find_all(expressions.Table):
+        table_name = table_node.name
+        if table_name:
+            referenced_tables.add(table_name.lower())
+
+    if "datasets" not in referenced_tables:
+        return ValidationResult(valid=True)
+
+    lowered_sql = sql.lower().replace('"', "")
+    has_scope = "datasets.is_public = true" in lowered_sql or "is_public = true" in lowered_sql
+    if not has_scope:
+        return ValidationResult(
+            valid=False,
+            error=(
+                "Query references restricted datasets. API key access is limited to public "
+                "datasets only and must include datasets.is_public = true."
+            ),
+            check_failed="whitelist",
+        )
+
+    return ValidationResult(valid=True)

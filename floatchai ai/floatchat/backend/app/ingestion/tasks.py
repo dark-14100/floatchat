@@ -123,6 +123,21 @@ def ingest_file_task(
     )
     log.info("ingest_file_task_started")
 
+    filename = original_filename or Path(file_path).name
+    profiles_total = 0
+    total_outliers = 0
+    write_errors: list[dict] = []
+
+    def _log_ingestion_completion(status: str, error_count: int) -> None:
+        log.info(
+            "ingestion_job_completion",
+            status=status,
+            file_name=filename,
+            records_parsed=profiles_total,
+            qc_flags_filtered=total_outliers,
+            error_count=error_count,
+        )
+
     db = SessionLocal()
 
     try:
@@ -136,13 +151,13 @@ def ingest_file_task(
         # =====================================================================
         # Step 2: Upload raw file to S3/MinIO (10%)
         # =====================================================================
-        filename = original_filename or Path(file_path).name
         s3_key = f"raw-uploads/{dataset_id}/{filename}"
 
         try:
             upload_file_to_s3(file_path, s3_key, job_id=job_id)
         except Exception as e:
             log.error("s3_upload_failed", error=str(e))
+            _log_ingestion_completion(status="failed", error_count=1)
             update_job_status(
                 db, job_id,
                 status="failed",
@@ -169,6 +184,7 @@ def ingest_file_task(
         is_valid, validation_error = validate_file(file_path)
         if not is_valid:
             log.warning("validation_failed", error=validation_error)
+            _log_ingestion_completion(status="failed", error_count=1)
             update_job_status(
                 db, job_id,
                 status="failed",
@@ -194,6 +210,7 @@ def ingest_file_task(
         # =====================================================================
         log.info("parsing_started")
         parse_results = parse_netcdf_all_profiles(file_path, job_id=job_id)
+        profiles_total = len(parse_results)
 
         # Filter out failed parses
         successful_parses = [pr for pr in parse_results if pr.success]
@@ -208,6 +225,7 @@ def ingest_file_task(
             if failed_parses:
                 error_msg = failed_parses[0].error_message or error_msg
             log.error("all_parses_failed", error=error_msg)
+            _log_ingestion_completion(status="failed", error_count=max(1, len(failed_parses)))
             update_job_status(
                 db, job_id,
                 status="failed",
@@ -297,6 +315,7 @@ def ingest_file_task(
             db.rollback()
             error_msg = f"Database write failed: {str(e)}"
             log.error("db_write_failed", error=str(e), traceback=traceback.format_exc())
+            _log_ingestion_completion(status="failed", error_count=max(1, len(write_errors) + 1))
             update_job_status(
                 db, job_id,
                 status="failed",
@@ -386,6 +405,7 @@ def ingest_file_task(
             "write_errors": len(write_errors),
         }
 
+        _log_ingestion_completion(status="succeeded", error_count=len(write_errors))
         log.info("job_complete", **summary)
         return summary
 
@@ -395,6 +415,7 @@ def ingest_file_task(
         error_msg = f"Unexpected error: {str(e)}"
         tb = traceback.format_exc()
         log.error("job_failed", error=str(e), traceback=tb)
+        _log_ingestion_completion(status="failed", error_count=1)
 
         try:
             update_job_status(
@@ -458,6 +479,18 @@ def ingest_zip_task(
     log = logger.bind(job_id=job_id, zip_path=zip_path)
     log.info("ingest_zip_task_started")
 
+    zip_file_name = Path(zip_path).name
+
+    def _log_zip_completion(status: str, records_parsed: int, error_count: int) -> None:
+        log.info(
+            "ingestion_job_completion",
+            status=status,
+            file_name=zip_file_name,
+            records_parsed=records_parsed,
+            qc_flags_filtered=0,
+            error_count=error_count,
+        )
+
     db = SessionLocal()
 
     try:
@@ -472,6 +505,7 @@ def ingest_zip_task(
             except zipfile.BadZipFile as e:
                 error_msg = f"Invalid ZIP file: {str(e)}"
                 log.error("zip_extraction_failed", error=error_msg)
+                _log_zip_completion(status="failed", records_parsed=0, error_count=1)
                 update_job_status(
                     db, job_id,
                     status="failed",
@@ -497,6 +531,7 @@ def ingest_zip_task(
             if not nc_files:
                 error_msg = "No .nc or .nc4 files found in ZIP archive"
                 log.warning("no_netcdf_in_zip")
+                _log_zip_completion(status="failed", records_parsed=0, error_count=1)
                 update_job_status(
                     db, job_id,
                     status="failed",
@@ -575,6 +610,7 @@ def ingest_zip_task(
 
             # Final status
             if dispatched == 0:
+                _log_zip_completion(status="failed", records_parsed=len(nc_files), error_count=max(1, len(errors)))
                 update_job_status(
                     db, job_id,
                     status="failed",
@@ -595,6 +631,7 @@ def ingest_zip_task(
                     "errors": errors,
                 }
             else:
+                _log_zip_completion(status="succeeded", records_parsed=len(nc_files), error_count=len(errors))
                 update_job_status(
                     db, job_id,
                     status="succeeded",
@@ -625,6 +662,7 @@ def ingest_zip_task(
         db.rollback()
         tb = traceback.format_exc()
         log.error("zip_task_failed", error=str(e), traceback=tb)
+        _log_zip_completion(status="failed", records_parsed=0, error_count=1)
 
         try:
             update_job_status(

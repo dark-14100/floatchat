@@ -22,21 +22,44 @@ Rules:
 """
 
 import time
+import uuid
 from datetime import date, datetime
 from typing import Optional
 
 import openai
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_admin_user
+from app.auth.dependencies import get_optional_api_key_or_user
 from app.config import settings
-from app.db.session import get_db
+from app.db.models import ApiKey, User
+from app.db.session import SessionLocal, get_db
+from app.monitoring.sentry import set_sentry_request_tags
+from app.rate_limiter import limiter
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["Search"])
+
+
+def _search_rate_limit(key: str) -> str:
+    if isinstance(key, str) and key.startswith("apikey:"):
+        api_key_id = key.split(":", 1)[1]
+        db = SessionLocal()
+        try:
+            api_key = db.scalar(select(ApiKey).where(ApiKey.key_id == uuid.UUID(api_key_id)))
+            if api_key and api_key.rate_limit_override:
+                return f"{int(api_key.rate_limit_override)}/minute"
+        except Exception:
+            pass
+        finally:
+            db.close()
+        return f"{settings.API_KEY_RATE_LIMIT_PER_MINUTE}/minute"
+    return f"{settings.JWT_RATE_LIMIT_PER_MINUTE}/minute"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -66,7 +89,9 @@ def _handle_pgvector_error(exc: Exception) -> None:
     summary="Search datasets by natural language query",
     response_description="Ranked list of matching datasets with relevance scores",
 )
+@limiter.limit(_search_rate_limit)
 async def search_datasets_endpoint(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search query text"),
     variable: Optional[str] = Query(None, description="Filter by variable name"),
     float_type: Optional[str] = Query(None, description="Filter by float type (core/BGC/deep)"),
@@ -75,7 +100,14 @@ async def search_datasets_endpoint(
     region: Optional[str] = Query(None, description="Filter by region name (fuzzy matched)"),
     limit: Optional[int] = Query(None, ge=1, le=settings.SEARCH_MAX_LIMIT, description="Max results"),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_api_key_or_user),
 ):
+    del request
+    set_sentry_request_tags(
+        query_type="dataset_search",
+        user_id=str(current_user.user_id) if current_user else None,
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)) if current_user else None,
+    )
     """
     Semantic search over dataset embeddings with optional structured filters.
 
@@ -108,6 +140,7 @@ async def search_datasets_endpoint(
             openai_client=client,
             filters=filters if filters else None,
             limit=limit,
+            public_only=bool(getattr(current_user, "api_key_scoped", False)),
         )
 
         elapsed = round(time.time() - start_time, 3)
@@ -130,13 +163,22 @@ async def search_datasets_endpoint(
     summary="Search floats by natural language query",
     response_description="Ranked list of matching floats with relevance scores",
 )
+@limiter.limit(_search_rate_limit)
 async def search_floats_endpoint(
+    request: Request,
     q: str = Query(..., min_length=1, description="Search query text"),
     float_type: Optional[str] = Query(None, description="Filter by float type (core/BGC/deep)"),
     region: Optional[str] = Query(None, description="Filter by region name (fuzzy matched)"),
     limit: Optional[int] = Query(None, ge=1, le=settings.SEARCH_MAX_LIMIT, description="Max results"),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_api_key_or_user),
 ):
+    del request
+    set_sentry_request_tags(
+        query_type="float_search",
+        user_id=str(current_user.user_id) if current_user else None,
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)) if current_user else None,
+    )
     """
     Semantic search over float embeddings with optional structured filters.
 
@@ -184,11 +226,20 @@ async def search_floats_endpoint(
     summary="Discover floats within a named ocean region",
     response_description="List of floats in the specified region",
 )
+@limiter.limit(_search_rate_limit)
 async def discover_floats_by_region_endpoint(
+    request: Request,
     region: str = Query(..., min_length=1, description="Ocean region name (fuzzy matched)"),
     float_type: Optional[str] = Query(None, description="Filter by float type (core/BGC/deep)"),
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_api_key_or_user),
 ):
+    del request
+    set_sentry_request_tags(
+        query_type="region_discovery",
+        user_id=str(current_user.user_id) if current_user else None,
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)) if current_user else None,
+    )
     """
     Spatial float discovery — not semantic search. Returns all floats whose
     latest position falls within the named ocean region polygon.
@@ -230,10 +281,20 @@ async def discover_floats_by_region_endpoint(
     summary="Get rich summary for a single dataset",
     response_description="Full dataset summary with metadata and bbox",
 )
+@limiter.limit(_search_rate_limit)
 async def get_dataset_summary_endpoint(
+    request: Request,
     dataset_id: int,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_api_key_or_user),
 ):
+    del request
+    set_sentry_request_tags(
+        query_type="dataset_summary",
+        dataset_id=str(dataset_id),
+        user_id=str(current_user.user_id) if current_user else None,
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)) if current_user else None,
+    )
     """
     Returns a rich summary for a single dataset including name, summary text,
     date range, counts, variable list, and bbox as GeoJSON.
@@ -244,7 +305,11 @@ async def get_dataset_summary_endpoint(
     try:
         from app.search.discovery import get_dataset_summary
 
-        result = get_dataset_summary(dataset_id=dataset_id, db=db)
+        result = get_dataset_summary(
+            dataset_id=dataset_id,
+            db=db,
+            public_only=bool(getattr(current_user, "api_key_scoped", False)),
+        )
 
         elapsed = round(time.time() - start_time, 3)
         log.info("dataset_summary_response", elapsed_seconds=elapsed)
@@ -265,9 +330,18 @@ async def get_dataset_summary_endpoint(
     summary="Get lightweight summaries for all active datasets",
     response_description="List of summary cards for all active datasets",
 )
+@limiter.limit(_search_rate_limit)
 async def get_all_summaries_endpoint(
+    request: Request,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_api_key_or_user),
 ):
+    del request
+    set_sentry_request_tags(
+        query_type="dataset_summaries",
+        user_id=str(current_user.user_id) if current_user else None,
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)) if current_user else None,
+    )
     """
     Returns lightweight summary cards for all active datasets, ordered by
     ingestion date descending. Summary text is truncated to 300 characters.
@@ -278,7 +352,10 @@ async def get_all_summaries_endpoint(
     try:
         from app.search.discovery import get_all_summaries
 
-        results = get_all_summaries(db=db)
+        results = get_all_summaries(
+            db=db,
+            public_only=bool(getattr(current_user, "api_key_scoped", False)),
+        )
 
         elapsed = round(time.time() - start_time, 3)
         log.info("all_summaries_response", result_count=len(results), elapsed_seconds=elapsed)

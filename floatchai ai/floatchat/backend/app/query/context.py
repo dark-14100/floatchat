@@ -19,6 +19,8 @@ from typing import Optional
 import structlog
 from redis import Redis
 
+from app.monitoring.metrics import record_cache_hit, record_cache_miss
+
 log = structlog.get_logger(__name__)
 
 
@@ -63,7 +65,9 @@ async def get_context(
     try:
         raw = redis_client.get(_key(session_id))
         if raw is None:
+            record_cache_miss("query_context")
             return []
+        record_cache_hit("query_context")
         turns = json.loads(raw)
         if not isinstance(turns, list):
             log.warning("context_invalid_format", session_id=session_id)

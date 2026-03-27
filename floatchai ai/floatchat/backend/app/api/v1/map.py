@@ -10,30 +10,49 @@ Endpoints:
   GET  /map/basin-polygons
 """
 
-from __future__ import annotations
-
 import json
 import time
+import uuid
 from datetime import datetime
 from typing import Any, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_api_key_or_user
 from app.config import get_settings
 from app.db.dal import get_profiles_by_radius
-from app.db.models import Float, Measurement, OceanRegion, Profile, mv_float_latest_position
-from app.db.session import get_readonly_db
+from app.db.models import ApiKey, Float, Measurement, OceanRegion, Profile, User, mv_float_latest_position
+from app.db.session import SessionLocal, get_readonly_db
+from app.monitoring.metrics import record_cache_hit, record_cache_miss
+from app.monitoring.sentry import set_sentry_request_tags
+from app.rate_limiter import limiter
 from app.search.discovery import resolve_region_name
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/map", tags=["Map"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/map", tags=["Map"], dependencies=[Depends(get_api_key_or_user)])
+
+
+def _map_rate_limit(key: str) -> str:
+    settings = get_settings()
+    if isinstance(key, str) and key.startswith("apikey:"):
+        api_key_id = key.split(":", 1)[1]
+        db = SessionLocal()
+        try:
+            api_key = db.scalar(select(ApiKey).where(ApiKey.key_id == uuid.UUID(api_key_id)))
+            if api_key and api_key.rate_limit_override:
+                return f"{int(api_key.rate_limit_override)}/minute"
+        except Exception:
+            pass
+        finally:
+            db.close()
+        return f"{settings.API_KEY_RATE_LIMIT_PER_MINUTE}/minute"
+    return f"{settings.JWT_RATE_LIMIT_PER_MINUTE}/minute"
 
 
 # ── Request/Response Models ────────────────────────────────────────────────
@@ -166,7 +185,18 @@ def _profiles_bbox_geojson(profiles: list[dict[str, Any]]) -> Optional[dict[str,
 # ── Endpoints ───────────────────────────────────────────────────────────────
 
 @router.get("/active-floats", response_model=list[ActiveFloatResponse])
-def get_active_floats(db: Session = Depends(get_readonly_db)) -> list[dict[str, Any]]:
+@limiter.limit(_map_rate_limit)
+def get_active_floats(
+    request: Request,
+    db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
+) -> list[dict[str, Any]]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_active_floats",
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return latest position for all active floats, cached in Redis."""
     start = time.perf_counter()
     settings = get_settings()
@@ -181,7 +211,9 @@ def get_active_floats(db: Session = Depends(get_readonly_db)) -> list[dict[str, 
             if cached:
                 data = json.loads(cached)
                 log.info("map_active_floats_cache_hit", count=len(data))
+                record_cache_hit("map_active_floats")
                 return data
+            record_cache_miss("map_active_floats")
         except Exception:
             log.warning("map_active_floats_cache_read_failed", exc_info=True)
 
@@ -231,13 +263,22 @@ def get_active_floats(db: Session = Depends(get_readonly_db)) -> list[dict[str, 
 
 
 @router.get("/nearest-floats", response_model=list[NearestFloatResponse])
+@limiter.limit(_map_rate_limit)
 def get_nearest_floats(
+    request: Request,
     lat: float,
     lon: float,
     n: int = Query(default=None),
     max_distance_km: float = Query(default=None),
     db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
 ) -> list[dict[str, Any]]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_nearest_floats",
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return N nearest active floats to a given point."""
     start = time.perf_counter()
     settings = get_settings()
@@ -310,34 +351,45 @@ def get_nearest_floats(
 
 
 @router.post("/radius-query", response_model=RadiusQueryResponse)
+@limiter.limit(_map_rate_limit)
 def post_radius_query(
-    body: RadiusQueryRequest,
+    request: Request,
+    body: dict[str, Any] = Body(...),
     db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
 ) -> dict[str, Any]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_radius_query",
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return profile metadata for profiles within a radius."""
     start = time.perf_counter()
     settings = get_settings()
 
-    _validate_lat_lon(body.lat, body.lon)
+    parsed_body = RadiusQueryRequest.model_validate(body)
+
+    _validate_lat_lon(parsed_body.lat, parsed_body.lon)
 
     log.info(
         "map_radius_query_request",
-        lat=body.lat,
-        lon=body.lon,
-        radius_km=body.radius_km,
-        variables=body.variables,
+        lat=parsed_body.lat,
+        lon=parsed_body.lon,
+        radius_km=parsed_body.radius_km,
+        variables=parsed_body.variables,
     )
 
-    if body.radius_km > settings.MAP_RADIUS_QUERY_MAX_KM:
+    if parsed_body.radius_km > settings.MAP_RADIUS_QUERY_MAX_KM:
         raise HTTPException(
             status_code=400,
-            detail=f"Radius {body.radius_km}km exceeds maximum of {settings.MAP_RADIUS_QUERY_MAX_KM}km",
+            detail=f"Radius {parsed_body.radius_km}km exceeds maximum of {settings.MAP_RADIUS_QUERY_MAX_KM}km",
         )
 
     profiles = get_profiles_by_radius(
-        body.lat,
-        body.lon,
-        body.radius_km * 1000.0,
+        parsed_body.lat,
+        parsed_body.lon,
+        parsed_body.radius_km * 1000.0,
         None,
         None,
         db=db,
@@ -364,10 +416,20 @@ def post_radius_query(
 
 
 @router.get("/floats/{platform_number}", response_model=FloatDetailResponse)
+@limiter.limit(_map_rate_limit)
 def get_float_detail(
+    request: Request,
     platform_number: str,
     db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
 ) -> dict[str, Any]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_float_detail",
+        float_id=platform_number,
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return metadata and recent profile temperature/pressure data for one float."""
     start = time.perf_counter()
     settings = get_settings()
@@ -470,10 +532,19 @@ def get_float_detail(
 
 
 @router.get("/basin-floats", response_model=list[BasinFloatResponse])
+@limiter.limit(_map_rate_limit)
 def get_basin_floats(
+    request: Request,
     basin_name: str,
     db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
 ) -> list[dict[str, Any]]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_basin_floats",
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return latest float positions for a resolved ocean basin."""
     start = time.perf_counter()
 
@@ -528,7 +599,18 @@ def get_basin_floats(
 
 
 @router.get("/basin-polygons", response_model=BasinPolygonsResponse)
-def get_basin_polygons(db: Session = Depends(get_readonly_db)) -> dict[str, Any]:
+@limiter.limit(_map_rate_limit)
+def get_basin_polygons(
+    request: Request,
+    db: Session = Depends(get_readonly_db),
+    current_user: User = Depends(get_api_key_or_user),
+) -> dict[str, Any]:
+    del request
+    set_sentry_request_tags(
+        query_type="map_basin_polygons",
+        user_id=str(current_user.user_id),
+        api_key_request=bool(getattr(current_user, "api_key_scoped", False)),
+    )
     """Return ocean basin polygons as GeoJSON FeatureCollection, cached in Redis."""
     start = time.perf_counter()
     cache_key = "map_basin_polygons"
@@ -543,7 +625,9 @@ def get_basin_polygons(db: Session = Depends(get_readonly_db)) -> dict[str, Any]
             if cached:
                 data = json.loads(cached)
                 log.info("map_basin_polygons_cache_hit", feature_count=len(data.get("features", [])))
+                record_cache_hit("map_basin_polygons")
                 return data
+            record_cache_miss("map_basin_polygons")
         except Exception:
             log.warning("map_basin_polygons_cache_read_failed", exc_info=True)
 

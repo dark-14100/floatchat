@@ -72,6 +72,7 @@ def search_datasets(
     openai_client,
     filters: Optional[dict[str, Any]] = None,
     limit: Optional[int] = None,
+    public_only: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Semantic similarity search over dataset embeddings with hybrid scoring.
@@ -178,6 +179,9 @@ def search_datasets(
         if isinstance(date_to, str):
             date_to = datetime.fromisoformat(date_to)
         stmt = stmt.where(Dataset.date_range_start <= date_to)
+
+    if public_only:
+        stmt = stmt.where(Dataset.is_public.is_(True))
 
     # Execute candidate query
     rows = db.execute(stmt).all()

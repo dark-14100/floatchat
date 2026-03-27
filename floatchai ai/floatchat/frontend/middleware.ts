@@ -31,11 +31,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/chat", request.url));
   }
 
+  // Protected-route redirects are handled client-side after refresh bootstrap.
+  // This avoids false login loops when the refresh cookie is not attached to
+  // frontend page requests due to cookie path/domain differences.
   if (!hasRefreshCookie && !isAuthRoute) {
-    const loginUrl = new URL("/login", request.url);
-    const redirectTarget = `${pathname}${search}`;
-    loginUrl.searchParams.set("redirect", redirectTarget);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.next();
   }
 
   return NextResponse.next();

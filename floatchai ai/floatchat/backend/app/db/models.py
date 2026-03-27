@@ -599,6 +599,46 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    api_keys: Mapped[list["ApiKey"]] = relationship(
+        "ApiKey",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+# =============================================================================
+# 13b. API Keys (Feature 11)
+# =============================================================================
+class ApiKey(Base):
+    """One row per API key hash used for public API authentication."""
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("ix_api_keys_key_hash", "key_hash", unique=True),
+        Index("ix_api_keys_user_id", "user_id"),
+    )
+
+    key_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=sa.text("true"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate_limit_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    user: Mapped["User"] = relationship("User", back_populates="api_keys")
 
 
 # =============================================================================
@@ -615,11 +655,11 @@ class AdminAuditLog(Base):
             "action IN ('dataset_upload_started', 'dataset_soft_deleted', 'dataset_hard_deleted', "
             "'dataset_metadata_updated', 'dataset_summary_regenerated', 'dataset_visibility_changed', "
             "'ingestion_job_retried', 'hard_delete_requested', 'hard_delete_completed', "
-            "'gdac_sync_triggered')",
+            "'gdac_sync_triggered', 'api_key_created', 'api_key_revoked', 'api_key_updated')",
             name="ck_admin_audit_log_action",
         ),
         CheckConstraint(
-            "entity_type IN ('dataset', 'ingestion_job', 'gdac_sync_run')",
+            "entity_type IN ('dataset', 'ingestion_job', 'gdac_sync_run', 'api_key')",
             name="ck_admin_audit_log_entity_type",
         ),
     )

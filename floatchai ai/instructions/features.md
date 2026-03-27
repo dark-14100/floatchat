@@ -2,7 +2,7 @@
 
 > **Product:** FloatChat — A natural language interface for ARGO oceanographic float data
 > **Version:** 2.0
-> **Status:** In Development — Features 1-10, 13, 14, and 15 complete, including GDAC auto-sync under Feature 10; roadmap features 11-12 are planned
+> **Status:** In Development — Features 1-10, 12, 13, 14, and 15 complete, including GDAC auto-sync under Feature 10; Feature 11 is in implementation
 
 ---
 
@@ -44,8 +44,8 @@
 | 9 — Guided Query Assistant | ✅ Complete |
 | 10 — Dataset Management | ✅ Complete |
 | 10.6 — GDAC Auto-Sync | ✅ Complete |
-| 11 — API Layer | ⏳ Planned |
-| 12 — System Monitoring | ⏳ Planned |
+| 11 — API Layer | 🚧 In Progress |
+| 12 — System Monitoring | ✅ Complete |
 
 ---
 
@@ -862,7 +862,7 @@ All of the following endpoints are fully built and functional. This feature docu
 
 ## 12. System Monitoring
 
-**Status: ⏳ Planned — build after API Layer (Feature 11)**
+**Status: ✅ Complete**
 
 ### Overview
 Operational reliability infrastructure for production deployment: structured logging pipeline, error tracking, performance metrics, and alerting. Note: `structlog` is already in use throughout the codebase and produces structured JSON logs — this feature routes those logs to a destination, adds error tracking (Sentry), adds metrics (Prometheus + Grafana), and wires up alerting. The ingestion monitoring dashboard is an extension of Feature 10's admin panel, not a separate UI.
@@ -938,16 +938,16 @@ Operational reliability infrastructure for production deployment: structured log
 - `@sentry/nextjs` — new npm dependency
 
 ### Tasks for Developers
-- [ ] Configure Sentry DSN for backend and frontend — disabled gracefully when DSN absent
-- [ ] Audit and fill gaps in structlog fields (NL query fields, ingestion fields)
-- [ ] Install and configure `prometheus-fastapi-instrumentator`
-- [ ] Add custom Prometheus metrics (LLM latency, DB time, Redis hit rate, Celery duration, anomaly scan duration)
-- [ ] Build Grafana dashboard with all metric panels
-- [ ] Build `GET /api/v1/health` endpoint with component checks
-- [ ] Set up external uptime monitor
-- [ ] Extend Feature 10 admin panel with ingestion monitoring aggregate views
-- [ ] Configure Slack alerting rules (Sentry + Prometheus + uptime)
-- [ ] Write alert runbook documenting each alert and its remediation steps
+- [x] Configure Sentry DSN for backend and frontend — disabled gracefully when DSN absent
+- [x] Audit and fill gaps in structlog fields (NL query fields, ingestion fields)
+- [x] Install and configure `prometheus-fastapi-instrumentator`
+- [x] Add custom Prometheus metrics (LLM latency, DB time, Redis hit rate, Celery duration, anomaly scan duration)
+- [x] Build Grafana dashboard with all metric panels
+- [x] Build `GET /api/v1/health` endpoint with component checks
+- [ ] Set up external uptime monitor (ops environment step)
+- [x] Extend Feature 10 admin panel with ingestion monitoring aggregate views
+- [x] Configure Slack alerting rules via daily digest and alert artifacts (receiver route remains docs-only in v1)
+- [x] Write alert runbook documenting each alert and its remediation steps
 
 ---
 

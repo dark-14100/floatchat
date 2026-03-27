@@ -25,9 +25,10 @@ import structlog
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
+from app.monitoring.metrics import observe_llm_call_duration
 from app.query.rag import build_rag_context, retrieve_similar_queries
-from app.query.schema_prompt import SCHEMA_PROMPT
-from app.query.validator import validate_sql
+from app.query.schema_prompt import get_schema_prompt
+from app.query.validator import enforce_public_dataset_scope, validate_sql
 
 log = structlog.get_logger(__name__)
 
@@ -133,6 +134,7 @@ def _build_messages(
     context: list[dict],
     geography: Optional[dict],
     rag_context: str = "",
+    api_key_scoped: bool = False,
     validation_error: Optional[str] = None,
 ) -> list[dict]:
     """
@@ -145,10 +147,11 @@ def _build_messages(
       - user: the current query
       - (optional) user addendum: previous validation error for retry
     """
-    system_prompt = SCHEMA_PROMPT
+    base_prompt = get_schema_prompt(api_key_scoped=api_key_scoped)
+    system_prompt = base_prompt
     if rag_context:
         # Keep SCHEMA_PROMPT unchanged and prepend dynamic history context.
-        system_prompt = f"{rag_context}\n\n{SCHEMA_PROMPT}"
+        system_prompt = f"{rag_context}\n\n{base_prompt}"
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -233,6 +236,7 @@ async def nl_to_sql(
     model: Optional[str] = None,
     user_id: Optional[UUID] = None,
     db: Optional[Session] = None,
+    api_key_scoped: bool = False,
 ) -> PipelineResult:
     """
     Core NL-to-SQL pipeline.
@@ -261,6 +265,7 @@ async def nl_to_sql(
     active_provider = (provider or settings.QUERY_LLM_PROVIDER).lower().strip()
     active_model = _get_model(active_provider, model, settings)
     max_retries = settings.QUERY_MAX_RETRIES
+    started_at = time.perf_counter()
 
     result = PipelineResult(provider=active_provider, model=active_model)
 
@@ -269,6 +274,15 @@ async def nl_to_sql(
         client = get_llm_client(active_provider, settings)
     except ValueError as exc:
         result.error = str(exc)
+        log.error(
+            "pipeline_failed",
+            nl_query=query,
+            generated_sql=None,
+            provider=active_provider,
+            execution_time_ms=round((time.perf_counter() - started_at) * 1000, 1),
+            row_count=None,
+            error=str(exc),
+        )
         return result
 
     rag_context = ""
@@ -299,24 +313,40 @@ async def nl_to_sql(
             context=context,
             geography=geography,
             rag_context=rag_context,
+            api_key_scoped=api_key_scoped,
             validation_error=validation_error,
         )
 
         # Call LLM
         try:
+            llm_started_at = time.perf_counter()
             response = client.chat.completions.create(
                 model=active_model,
                 messages=messages,
                 temperature=settings.QUERY_LLM_TEMPERATURE,
                 max_tokens=settings.QUERY_LLM_MAX_TOKENS,
             )
+            observe_llm_call_duration(
+                time.perf_counter() - llm_started_at,
+                provider=active_provider,
+                model=active_model,
+            )
             response_text = response.choices[0].message.content or ""
         except Exception as exc:
+            observe_llm_call_duration(
+                max(time.perf_counter() - llm_started_at, 0.0),
+                provider=active_provider,
+                model=active_model,
+            )
             log.error(
                 "llm_call_failed",
+                nl_query=query,
+                generated_sql=None,
                 provider=active_provider,
                 model=active_model,
                 attempt=attempt + 1,
+                execution_time_ms=round((time.perf_counter() - started_at) * 1000, 1),
+                row_count=None,
                 error=str(exc),
             )
             result.error = f"LLM call failed: {exc}"
@@ -350,6 +380,18 @@ async def nl_to_sql(
             )
             continue
 
+        if api_key_scoped:
+            scope_result = enforce_public_dataset_scope(sql)
+            if not scope_result.valid:
+                validation_error = scope_result.error or "Missing public dataset scope"
+                result.validation_errors.append(validation_error)
+                log.warning(
+                    "sql_public_scope_missing",
+                    attempt=attempt + 1,
+                    error=validation_error,
+                )
+                continue
+
         # Validation passed — return the SQL
         result.sql = sql
         result.retries_used = attempt
@@ -357,9 +399,13 @@ async def nl_to_sql(
             log.info("sql_validation_warnings", warnings=vr.warnings)
         log.info(
             "pipeline_success",
+            nl_query=query,
+            generated_sql=sql,
             provider=active_provider,
             model=active_model,
             retries=attempt,
+            execution_time_ms=round((time.perf_counter() - started_at) * 1000, 1),
+            row_count=None,
         )
         return result
 
@@ -371,9 +417,13 @@ async def nl_to_sql(
     result.retries_used = max_retries
     log.error(
         "pipeline_exhausted",
+        nl_query=query,
+        generated_sql=None,
         provider=active_provider,
         model=active_model,
         max_retries=max_retries,
+        execution_time_ms=round((time.perf_counter() - started_at) * 1000, 1),
+        row_count=None,
         errors=result.validation_errors,
     )
     return result
@@ -438,6 +488,7 @@ async def interpret_results(
     )
 
     try:
+        llm_started_at = time.perf_counter()
         response = client.chat.completions.create(
             model=_get_model(settings.QUERY_LLM_PROVIDER, None, settings),
             messages=[
@@ -447,10 +498,20 @@ async def interpret_results(
             temperature=0.3,
             max_tokens=512,
         )
+        observe_llm_call_duration(
+            time.perf_counter() - llm_started_at,
+            provider=settings.QUERY_LLM_PROVIDER,
+            model=_get_model(settings.QUERY_LLM_PROVIDER, None, settings),
+        )
         interpretation = response.choices[0].message.content or ""
         return interpretation.strip()
 
     except Exception as exc:
+        observe_llm_call_duration(
+            max(time.perf_counter() - llm_started_at, 0.0),
+            provider=settings.QUERY_LLM_PROVIDER,
+            model=_get_model(settings.QUERY_LLM_PROVIDER, None, settings),
+        )
         log.warning("interpretation_failed", error=str(exc))
         return _fallback_interpretation(row_count, columns)
 

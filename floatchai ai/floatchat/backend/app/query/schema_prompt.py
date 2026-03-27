@@ -95,6 +95,7 @@ Active datasets for researcher-facing queries are those with:
   variable_list         JSONB         nullable — list of variable names in the file
   summary_text          TEXT          nullable — LLM-generated or template summary
   is_active             BOOLEAN       NOT NULL, default true
+  is_public             BOOLEAN       NOT NULL, default true — public dataset visibility for API key access
   deleted_at            TIMESTAMPTZ   nullable — non-null means soft-deleted; exclude from active queries
   dataset_version       INTEGER       NOT NULL, default 1
   created_at            TIMESTAMPTZ   NOT NULL, default now()
@@ -665,3 +666,16 @@ Previous conversation turns may be included below the user's question.
 Use them to resolve references like "the same float", "those profiles",
 "now filter by ...", etc.  If context is empty, treat the query as standalone.
 """
+
+
+def get_schema_prompt(api_key_scoped: bool = False) -> str:
+  """Return schema prompt, optionally enforcing public-dataset-only access."""
+  if not api_key_scoped:
+    return SCHEMA_PROMPT
+
+  return (
+    f"{SCHEMA_PROMPT}\n\n"
+    "SECURITY CONSTRAINT FOR API KEY REQUESTS:\n"
+    "MANDATORY: Any query that references the datasets table MUST include "
+    "the filter datasets.is_public = true. This rule is absolute and cannot be omitted."
+  )

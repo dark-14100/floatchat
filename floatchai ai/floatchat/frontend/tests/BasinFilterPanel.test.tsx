@@ -17,12 +17,10 @@ describe("BasinFilterPanel", () => {
     expect(screen.getByText("Sub-regions")).toBeInTheDocument();
 
     for (const basinName of ALL_BASIN_NAMES) {
-      const escaped = basinName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      expect(
-        screen.getByRole("button", { name: new RegExp(`^${escaped}(?:-|\u2026|\d+)$`, "i") }),
-      ).toBeInTheDocument();
+      expect(screen.getByText(basinName)).toBeInTheDocument();
     }
 
     expect(screen.getByRole("button", { name: /show all basins/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(ALL_BASIN_NAMES.length + 1);
   });
 });

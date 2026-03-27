@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.admin.tasks import hard_delete_dataset_task, regenerate_summary_task
@@ -21,6 +21,7 @@ from app.db.models import (
     AdminAuditLog,
     Anomaly,
     Dataset,
+    Float,
     GDACSyncRun,
     IngestionJob,
     Measurement,
@@ -118,6 +119,18 @@ def _serialize_gdac_sync_run(run: GDACSyncRun) -> dict[str, Any]:
         "triggered_by": run.triggered_by,
         "duration_seconds": duration_seconds,
     }
+
+
+def _utc_day_bounds(reference_time: datetime | None = None) -> tuple[datetime, datetime]:
+    """Return [start, end) bounds for the UTC calendar day containing reference_time."""
+    now_utc = reference_time or datetime.now(timezone.utc)
+    day_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
+    return day_start, day_start + timedelta(days=1)
+
+
+def _utc_day_label(column) -> Any:
+    """Build a UTC day bucket expression for SQL grouping."""
+    return func.date_trunc("day", func.timezone("UTC", column))
 
 
 def _write_audit_log(
@@ -621,6 +634,144 @@ async def list_admin_ingestion_jobs(
         "total": total,
         "limit": limit,
         "offset": offset,
+    }
+
+
+@router.get("/ingestion/summary")
+async def get_ingestion_summary(
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return UTC-day ingestion health aggregates for the admin dashboard."""
+    start_utc, end_utc = _utc_day_bounds()
+
+    aggregate_row = db.execute(
+        select(
+            func.count(IngestionJob.job_id).label("total_jobs"),
+            func.coalesce(func.sum(IngestionJob.profiles_ingested), 0).label("profiles_ingested"),
+            func.sum(case((IngestionJob.status == "failed", 1), else_=0)).label("failed_jobs"),
+            func.avg(
+                case(
+                    (
+                        IngestionJob.completed_at.is_not(None) & IngestionJob.started_at.is_not(None),
+                        func.extract("epoch", IngestionJob.completed_at - IngestionJob.started_at),
+                    ),
+                    else_=None,
+                )
+            ).label("avg_duration_seconds"),
+        ).where(
+            IngestionJob.created_at >= start_utc,
+            IngestionJob.created_at < end_utc,
+        )
+    ).one()
+
+    source_counts = {
+        "manual_upload": 0,
+        "gdac_sync": 0,
+    }
+    for source, count in db.execute(
+        select(IngestionJob.source, func.count(IngestionJob.job_id))
+        .where(
+            IngestionJob.created_at >= start_utc,
+            IngestionJob.created_at < end_utc,
+        )
+        .group_by(IngestionJob.source)
+    ).all():
+        source_counts[source] = int(count or 0)
+
+    new_floats_discovered = db.execute(
+        select(func.count(Float.float_id)).where(
+            Float.created_at >= start_utc,
+            Float.created_at < end_utc,
+        )
+    ).scalar_one()
+
+    failed_job_rows = db.execute(
+        select(IngestionJob.original_filename)
+        .where(
+            IngestionJob.created_at >= start_utc,
+            IngestionJob.created_at < end_utc,
+            IngestionJob.status == "failed",
+        )
+        .order_by(IngestionJob.created_at.asc())
+    ).all()
+
+    failed_job_names = [name or "unknown_file" for (name,) in failed_job_rows]
+
+    return {
+        "date_utc": start_utc.date().isoformat(),
+        "total_profiles_ingested": int(aggregate_row.profiles_ingested or 0),
+        "new_floats_discovered": int(new_floats_discovered or 0),
+        "failed_jobs_count": int(aggregate_row.failed_jobs or 0),
+        "failed_jobs": failed_job_names,
+        "average_ingestion_duration_seconds": (
+            round(float(aggregate_row.avg_duration_seconds), 2)
+            if aggregate_row.avg_duration_seconds is not None
+            else None
+        ),
+        "source_breakdown": source_counts,
+        "job_counts": {
+            "total": int(aggregate_row.total_jobs or 0),
+            "failed": int(aggregate_row.failed_jobs or 0),
+        },
+    }
+
+
+@router.get("/ingestion/trend")
+async def get_ingestion_trend(
+    days: int = Query(7, ge=1, le=30),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return UTC daily ingestion trend and failed rate for dashboard charts."""
+    today_start_utc, _ = _utc_day_bounds()
+    window_start = today_start_utc - timedelta(days=days - 1)
+    window_end = today_start_utc + timedelta(days=1)
+
+    day_bucket = _utc_day_label(IngestionJob.created_at)
+    rows = db.execute(
+        select(
+            day_bucket.label("day_utc"),
+            func.coalesce(func.sum(IngestionJob.profiles_ingested), 0).label("profiles_ingested"),
+            func.count(IngestionJob.job_id).label("total_jobs"),
+            func.sum(case((IngestionJob.status == "failed", 1), else_=0)).label("failed_jobs"),
+        )
+        .where(
+            IngestionJob.created_at >= window_start,
+            IngestionJob.created_at < window_end,
+        )
+        .group_by(day_bucket)
+        .order_by(day_bucket.asc())
+    ).all()
+
+    row_map: dict[str, dict[str, int]] = {}
+    for row in rows:
+        day_key = row.day_utc.date().isoformat()
+        row_map[day_key] = {
+            "profiles_ingested": int(row.profiles_ingested or 0),
+            "failed_jobs": int(row.failed_jobs or 0),
+            "total_jobs": int(row.total_jobs or 0),
+        }
+
+    trend: list[dict[str, Any]] = []
+    for offset in range(days):
+        day = window_start + timedelta(days=offset)
+        day_key = day.date().isoformat()
+        values = row_map.get(day_key, {"profiles_ingested": 0, "failed_jobs": 0, "total_jobs": 0})
+        total_jobs = values["total_jobs"]
+        failed_jobs = values["failed_jobs"]
+        failed_rate = (failed_jobs / total_jobs * 100.0) if total_jobs > 0 else 0.0
+        trend.append(
+            {
+                "date_utc": day_key,
+                "profiles_ingested": values["profiles_ingested"],
+                "failed_jobs": failed_jobs,
+                "total_jobs": total_jobs,
+                "failed_job_rate_pct": round(failed_rate, 2),
+            }
+        )
+
+    return {
+        "days": days,
+        "trend": trend,
     }
 
 

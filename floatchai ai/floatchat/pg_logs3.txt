@@ -1,0 +1,50 @@
+2026-03-27 04:53:10.750 UTC [202] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:53:10.750 UTC [202] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:53:10.750 UTC [202] STATEMENT:  SELECT mv_float_latest_position.float_id, mv_float_latest_position.platform_number, floats.float_type, mv_float_latest_position.latitude, mv_float_latest_position.longitude, mv_float_latest_position.timestamp, ST_Distance(mv_float_latest_position.geom, ST_GeogFromText('SRID=4326;POINT(56.77734375000001 9.980326266451026)')) / CAST(1000.0 AS FLOAT) AS distance_km 
+	FROM mv_float_latest_position JOIN floats ON mv_float_latest_position.float_id = floats.float_id 
+	WHERE ST_DWithin(mv_float_latest_position.geom, ST_GeogFromText('SRID=4326;POINT(56.77734375000001 9.980326266451026)'), 500000.0) ORDER BY distance_km ASC 
+	 LIMIT 10
+2026-03-27 04:53:29.974 UTC [202] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:53:29.974 UTC [202] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:53:29.974 UTC [202] STATEMENT:  SELECT anomalies.anomaly_id, anomalies.float_id, anomalies.profile_id, anomalies.anomaly_type, anomalies.severity, anomalies.variable, anomalies.baseline_value, anomalies.observed_value, anomalies.deviation_percent, anomalies.description, anomalies.detected_at, anomalies.region, anomalies.is_reviewed, anomalies.reviewed_by, anomalies.reviewed_at, floats.platform_number, mv_float_latest_position.latitude, mv_float_latest_position.longitude 
+	FROM anomalies JOIN floats ON floats.float_id = anomalies.float_id LEFT OUTER JOIN mv_float_latest_position ON mv_float_latest_position.float_id = anomalies.float_id 
+	WHERE anomalies.detected_at >= '2026-03-20T04:53:29.958918+00:00'::timestamptz AND anomalies.is_reviewed IS false ORDER BY anomalies.detected_at DESC 
+	 LIMIT 1 OFFSET 0
+2026-03-27 04:53:29.976 UTC [665] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:53:29.976 UTC [665] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:53:29.976 UTC [665] STATEMENT:  SELECT anomalies.anomaly_id, anomalies.float_id, anomalies.profile_id, anomalies.anomaly_type, anomalies.severity, anomalies.variable, anomalies.baseline_value, anomalies.observed_value, anomalies.deviation_percent, anomalies.description, anomalies.detected_at, anomalies.region, anomalies.is_reviewed, anomalies.reviewed_by, anomalies.reviewed_at, floats.platform_number, mv_float_latest_position.latitude, mv_float_latest_position.longitude 
+	FROM anomalies JOIN floats ON floats.float_id = anomalies.float_id LEFT OUTER JOIN mv_float_latest_position ON mv_float_latest_position.float_id = anomalies.float_id 
+	WHERE anomalies.detected_at >= '2026-03-20T04:53:29.959654+00:00'::timestamptz ORDER BY anomalies.detected_at DESC 
+	 LIMIT 200 OFFSET 0
+2026-03-27 04:53:30.073 UTC [202] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:53:30.073 UTC [202] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:53:30.073 UTC [202] STATEMENT:  SELECT anomalies.anomaly_id, anomalies.float_id, anomalies.profile_id, anomalies.anomaly_type, anomalies.severity, anomalies.variable, anomalies.baseline_value, anomalies.observed_value, anomalies.deviation_percent, anomalies.description, anomalies.detected_at, anomalies.region, anomalies.is_reviewed, anomalies.reviewed_by, anomalies.reviewed_at, floats.platform_number, mv_float_latest_position.latitude, mv_float_latest_position.longitude 
+	FROM anomalies JOIN floats ON floats.float_id = anomalies.float_id LEFT OUTER JOIN mv_float_latest_position ON mv_float_latest_position.float_id = anomalies.float_id 
+	WHERE anomalies.detected_at >= '2026-03-20T04:53:30.064184+00:00'::timestamptz AND anomalies.is_reviewed IS false ORDER BY anomalies.detected_at DESC 
+	 LIMIT 1 OFFSET 0
+2026-03-27 04:53:30.086 UTC [665] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:53:30.086 UTC [665] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:53:30.086 UTC [665] STATEMENT:  SELECT anomalies.anomaly_id, anomalies.float_id, anomalies.profile_id, anomalies.anomaly_type, anomalies.severity, anomalies.variable, anomalies.baseline_value, anomalies.observed_value, anomalies.deviation_percent, anomalies.description, anomalies.detected_at, anomalies.region, anomalies.is_reviewed, anomalies.reviewed_by, anomalies.reviewed_at, floats.platform_number, mv_float_latest_position.latitude, mv_float_latest_position.longitude 
+	FROM anomalies JOIN floats ON floats.float_id = anomalies.float_id LEFT OUTER JOIN mv_float_latest_position ON mv_float_latest_position.float_id = anomalies.float_id 
+	WHERE anomalies.detected_at >= '2026-03-20T04:53:30.076794+00:00'::timestamptz ORDER BY anomalies.detected_at DESC 
+	 LIMIT 200 OFFSET 0
+2026-03-27 04:53:54.857 UTC [26] LOG:  checkpoint starting: time
+2026-03-27 04:53:56.145 UTC [26] LOG:  checkpoint complete: wrote 12 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.243 s, sync=0.012 s, total=1.291 s; sync files=11, longest=0.007 s, average=0.002 s; distance=11 kB, estimate=36 kB
+2026-03-27 04:58:29.953 UTC [202] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 04:58:29.953 UTC [202] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 04:58:29.953 UTC [202] STATEMENT:  SELECT anomalies.anomaly_id, anomalies.float_id, anomalies.profile_id, anomalies.anomaly_type, anomalies.severity, anomalies.variable, anomalies.baseline_value, anomalies.observed_value, anomalies.deviation_percent, anomalies.description, anomalies.detected_at, anomalies.region, anomalies.is_reviewed, anomalies.reviewed_by, anomalies.reviewed_at, floats.platform_number, mv_float_latest_position.latitude, mv_float_latest_position.longitude 
+	FROM anomalies JOIN floats ON floats.float_id = anomalies.float_id LEFT OUTER JOIN mv_float_latest_position ON mv_float_latest_position.float_id = anomalies.float_id 
+	WHERE anomalies.detected_at >= '2026-03-20T04:58:29.920241+00:00'::timestamptz AND anomalies.is_reviewed IS false ORDER BY anomalies.detected_at DESC 
+	 LIMIT 1 OFFSET 0
+2026-03-27 05:00:08.693 UTC [1291] ERROR:  materialized view "mv_dataset_stats" has not been populated
+2026-03-27 05:00:08.693 UTC [1291] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 05:00:08.693 UTC [1291] STATEMENT:  SELECT * FROM mv_dataset_stats LIMIT 1;
+2026-03-27 05:00:14.904 UTC [1306] ERROR:  materialized view "mv_float_latest_position" has not been populated
+2026-03-27 05:00:14.904 UTC [1306] HINT:  Use the REFRESH MATERIALIZED VIEW command.
+2026-03-27 05:00:14.904 UTC [1306] STATEMENT:  SELECT * FROM mv_float_latest_position LIMIT 1;
+2026-03-27 05:03:54.180 UTC [26] LOG:  checkpoint starting: time
+2026-03-27 05:04:00.667 UTC [26] LOG:  checkpoint complete: wrote 38 buffers (0.2%); 0 WAL file(s) added, 0 removed, 0 recycled; write=4.914 s, sync=0.429 s, total=6.536 s; sync files=25, longest=0.111 s, average=0.018 s; distance=210 kB, estimate=210 kB
+2026-03-27 05:08:54.612 UTC [26] LOG:  checkpoint starting: time
+2026-03-27 05:08:54.963 UTC [26] LOG:  checkpoint complete: wrote 4 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.311 s, sync=0.013 s, total=0.352 s; sync files=4, longest=0.010 s, average=0.004 s; distance=1 kB, estimate=189 kB
+2026-03-27 05:18:55.045 UTC [26] LOG:  checkpoint starting: time
+2026-03-27 05:18:56.901 UTC [26] LOG:  checkpoint complete: wrote 18 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.825 s, sync=0.012 s, total=1.857 s; sync files=5, longest=0.009 s, average=0.003 s; distance=34 kB, estimate=173 kB

@@ -87,6 +87,33 @@ export interface AdminIngestionJobsResponse {
   offset: number;
 }
 
+export interface AdminIngestionSummaryResponse {
+  date_utc: string;
+  total_profiles_ingested: number;
+  new_floats_discovered: number;
+  failed_jobs_count: number;
+  failed_jobs: string[];
+  average_ingestion_duration_seconds: number | null;
+  source_breakdown: Record<AdminIngestionSource, number>;
+  job_counts: {
+    total: number;
+    failed: number;
+  };
+}
+
+export interface AdminIngestionTrendPoint {
+  date_utc: string;
+  profiles_ingested: number;
+  failed_jobs: number;
+  total_jobs: number;
+  failed_job_rate_pct: number;
+}
+
+export interface AdminIngestionTrendResponse {
+  days: number;
+  trend: AdminIngestionTrendPoint[];
+}
+
 export interface GDACSyncRunsResponse {
   runs: GDACSyncRun[];
   total: number;
@@ -261,6 +288,15 @@ export async function listAdminIngestionJobs(
     offset: params.offset,
   });
   return apiFetch<AdminIngestionJobsResponse>(`/admin/ingestion-jobs${query}`);
+}
+
+export async function getAdminIngestionSummary(): Promise<AdminIngestionSummaryResponse> {
+  return apiFetch<AdminIngestionSummaryResponse>("/admin/ingestion/summary");
+}
+
+export async function getAdminIngestionTrend(days = 7): Promise<AdminIngestionTrendResponse> {
+  const query = buildQuery({ days });
+  return apiFetch<AdminIngestionTrendResponse>(`/admin/ingestion/trend${query}`);
 }
 
 export async function retryAdminIngestionJob(jobId: string): Promise<RetryIngestionResponse> {

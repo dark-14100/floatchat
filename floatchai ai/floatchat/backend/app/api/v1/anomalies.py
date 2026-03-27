@@ -7,19 +7,40 @@ from typing import Any, Optional
 import uuid
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.anomaly.baselines import compute_all_baselines
-from app.auth.dependencies import get_current_admin_user, get_current_user
+from app.auth.dependencies import get_api_key_or_user, get_current_admin_user, get_current_user
 from app.db.models import Anomaly, Float, Measurement, Profile, User, mv_float_latest_position
-from app.db.session import get_db, get_readonly_db
+from app.db.models import ApiKey
+from app.db.session import SessionLocal, get_db, get_readonly_db
+from app.rate_limiter import limiter
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/anomalies", tags=["Anomalies"])
+
+
+def _anomaly_rate_limit(key: str) -> str:
+    from app.config import get_settings
+
+    settings = get_settings()
+    if isinstance(key, str) and key.startswith("apikey:"):
+        api_key_id = key.split(":", 1)[1]
+        db = SessionLocal()
+        try:
+            api_key = db.scalar(select(ApiKey).where(ApiKey.key_id == uuid.UUID(api_key_id)))
+            if api_key and api_key.rate_limit_override:
+                return f"{int(api_key.rate_limit_override)}/minute"
+        except Exception:
+            pass
+        finally:
+            db.close()
+        return f"{settings.API_KEY_RATE_LIMIT_PER_MINUTE}/minute"
+    return f"{settings.JWT_RATE_LIMIT_PER_MINUTE}/minute"
 
 
 class AnomalyListItemResponse(BaseModel):
@@ -112,8 +133,10 @@ def _parse_uuid(value: str, field_name: str) -> uuid.UUID:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name} format") from exc
 
 
-@router.get("", response_model=AnomalyListResponse, dependencies=[Depends(get_current_user)])
+@router.get("", response_model=AnomalyListResponse, dependencies=[Depends(get_api_key_or_user)])
+@limiter.limit(_anomaly_rate_limit)
 def list_anomalies(
+    request: Request,
     severity: Optional[str] = Query(default=None),
     anomaly_type: Optional[str] = Query(default=None),
     variable: Optional[str] = Query(default=None),
@@ -123,6 +146,7 @@ def list_anomalies(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_readonly_db),
 ) -> AnomalyListResponse:
+    del request
     """List anomalies with pagination and filters."""
     cutoff = datetime.now(UTC) - timedelta(days=days)
 
@@ -188,11 +212,14 @@ def list_anomalies(
     return AnomalyListResponse(items=items, total=int(total), limit=limit, offset=offset)
 
 
-@router.get("/{anomaly_id}", response_model=AnomalyDetailResponse, dependencies=[Depends(get_current_user)])
+@router.get("/{anomaly_id}", response_model=AnomalyDetailResponse, dependencies=[Depends(get_api_key_or_user)])
+@limiter.limit(_anomaly_rate_limit)
 def get_anomaly_detail(
+    request: Request,
     anomaly_id: str,
     db: Session = Depends(get_readonly_db),
 ) -> AnomalyDetailResponse:
+    del request
     """Get full anomaly detail including float metadata and profile measurements."""
     anomaly_uuid = _parse_uuid(anomaly_id, "anomaly_id")
 
@@ -282,11 +309,14 @@ def get_anomaly_detail(
 
 
 @router.patch("/{anomaly_id}/review", response_model=AnomalyListItemResponse)
+@limiter.limit(_anomaly_rate_limit)
 def mark_anomaly_reviewed(
+    request: Request,
     anomaly_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_api_key_or_user),
 ) -> AnomalyListItemResponse:
+    del request
     """Mark anomaly as reviewed by current authenticated user."""
     anomaly_uuid = _parse_uuid(anomaly_id, "anomaly_id")
 
