@@ -41,6 +41,24 @@ def _entry(file_path: str = "dac/aoml/1234567/profiles/R1234567_001.nc") -> GDAC
     )
 
 
+def test_file_url_inserts_dac_prefix_when_missing():
+    url = downloader._file_url(
+        "https://data-argo.ifremer.fr",
+        "aoml/4903069/profiles/R4903069_151D.nc",
+    )
+
+    assert url == "https://data-argo.ifremer.fr/dac/aoml/4903069/profiles/R4903069_151D.nc"
+
+
+def test_file_url_preserves_single_dac_prefix():
+    url = downloader._file_url(
+        "https://data-argo.ifremer.fr/",
+        "/dac/aoml/4903069/profiles/R4903069_151D.nc",
+    )
+
+    assert url == "https://data-argo.ifremer.fr/dac/aoml/4903069/profiles/R4903069_151D.nc"
+
+
 def test_download_single_file_retries_then_succeeds(monkeypatch):
     call_counter = {"count": 0}
 
