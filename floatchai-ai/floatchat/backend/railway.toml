@@ -1,9 +1,4 @@
-# Railway deployment config for the FloatChat backend API service.
-#
-# For background processing, create two additional Railway services from the same
-# backend directory and set their start commands to:
-# - celery -A app.celery_app.celery worker --loglevel=info -Q ingestion,default
-# - celery -A app.celery_app.celery beat --loglevel=info
+# Railway deployment config for the FloatChat backend
 
 [build]
 builder = "NIXPACKS"
@@ -14,5 +9,15 @@ preDeployCommand = "alembic upgrade head"
 startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[services.worker]
+startCommand = "celery -A app.celery_app worker --loglevel=info -Q ingestion,default"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[services.beat]
+startCommand = "celery -A app.celery_app beat --loglevel=info"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
