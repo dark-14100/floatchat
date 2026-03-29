@@ -82,3 +82,42 @@ def test_download_and_parse_index_fails_over_to_secondary(monkeypatch):
     assert len(entries) == 1
     assert any(mirror == "https://primary.example" for mirror, _ in calls)
     assert any(mirror == "https://secondary.example" for mirror, _ in calls)
+
+
+def test_download_and_parse_index_skips_merge_without_mirror_failover(monkeypatch):
+    calls: list[tuple[str, str]] = []
+    global_payload = _gzip_payload(
+        "# idx\n"
+        "dac/aoml/1234567/profiles/R1234567_001.nc\t20240101\t10.0\t20.0\tI\t846\tAOML\t20240101120000\n"
+    )
+
+    monkeypatch.setattr(index.settings, "GDAC_SECONDARY_MIRROR", "https://secondary.example")
+
+    def fake_download(mirror_url: str, index_filename: str) -> bytes:
+        calls.append((mirror_url, index_filename))
+        if mirror_url == "https://secondary.example":
+            raise AssertionError("secondary mirror should not be used")
+
+        if index_filename == index.GLOBAL_PROFILE_INDEX:
+            return global_payload
+
+        if index_filename == index.MERGE_PROFILE_INDEX:
+            raise RuntimeError("404 Not Found")
+
+        raise AssertionError(f"Unexpected index filename: {index_filename}")
+
+    monkeypatch.setattr(index, "_download_index_bytes", fake_download)
+
+    entries, used_mirror = index.download_and_parse_index_with_mirror("https://primary.example")
+
+    assert used_mirror == "https://primary.example"
+    assert len(entries) == 1
+    assert all(mirror == "https://primary.example" for mirror, _ in calls)
+    assert (
+        "https://primary.example",
+        index.GLOBAL_PROFILE_INDEX,
+    ) in calls
+    assert (
+        "https://primary.example",
+        index.MERGE_PROFILE_INDEX,
+    ) in calls
