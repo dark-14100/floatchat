@@ -1,2 +1,0 @@
-[phases.setup]
-nixPkgs = ["hdf5", "netcdf", "curl", "gcc"]
