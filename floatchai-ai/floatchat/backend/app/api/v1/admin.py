@@ -490,7 +490,7 @@ async def hard_delete_dataset(
 
 
 @router.post("/gdac-sync/trigger")
-@limiter.limit("1/10minutes", key_func=_gdac_manual_trigger_limit_key)
+@limiter.limit("1/10minutes", key_func=lambda request: "gdac_sync_manual_trigger_global")
 async def trigger_gdac_sync(
     request: Request,
     db: Session = Depends(get_db),
