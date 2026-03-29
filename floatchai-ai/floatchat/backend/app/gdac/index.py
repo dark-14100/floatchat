@@ -203,10 +203,25 @@ def download_and_parse_index_with_mirror(mirror_url: str) -> tuple[list[GDACProf
             logger.info("gdac_index_download_started", mirror=candidate)
 
             global_index = _download_index_bytes(candidate, GLOBAL_PROFILE_INDEX)
-            merge_index = _download_index_bytes(candidate, MERGE_PROFILE_INDEX)
-
             global_entries = _parse_index_rows(global_index, source_name=GLOBAL_PROFILE_INDEX)
-            merge_entries = _parse_index_rows(merge_index, source_name=MERGE_PROFILE_INDEX)
+
+            # Merge/BGC index is optional. Any failure should not fail sync or
+            # trigger mirror failover when the core global index succeeded.
+            merge_entries: list[GDACProfileEntry] = []
+            try:
+                merge_index = _download_index_bytes(candidate, MERGE_PROFILE_INDEX)
+                merge_entries = _parse_index_rows(
+                    merge_index,
+                    source_name=MERGE_PROFILE_INDEX,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "gdac_merge_index_skipped",
+                    mirror=candidate,
+                    index=MERGE_PROFILE_INDEX,
+                    error=str(exc),
+                )
+
             all_entries = _deduplicate_by_path(global_entries + merge_entries)
 
             logger.info(
