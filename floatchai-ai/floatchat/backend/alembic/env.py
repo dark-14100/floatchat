@@ -32,8 +32,7 @@ target_metadata = Base.metadata
 # Alembic must connect directly to PostgreSQL because PgBouncer's transaction
 # pooling mode does not support DDL operations.
 DATABASE_URL = os.getenv(
-    "DATABASE_URL_DIRECT",
-    "postgresql+psycopg2://floatchat:floatchat@localhost:5432/floatchat"
+    "DATABASE_URL",
 )
 
 
