@@ -44,7 +44,10 @@ def _user_agent() -> str:
 
 
 def _file_url(mirror_url: str, file_path: str) -> str:
-    return f"{mirror_url.rstrip('/')}/{file_path.lstrip('/')}"
+    normalized_path = file_path.lstrip("/")
+    if not normalized_path.startswith("dac/"):
+        normalized_path = f"dac/{normalized_path}"
+    return f"{mirror_url.rstrip('/')}/{normalized_path}"
 
 
 def _temp_nc_path(file_path: str) -> str:
