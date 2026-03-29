@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-import gzip
-import io
+import codecs
 from typing import Iterable, Optional
+import zlib
 
 import httpx
 import structlog
@@ -59,15 +59,56 @@ def _index_url(mirror_url: str, index_filename: str) -> str:
     return f"{mirror_url.rstrip('/')}/{index_filename}"
 
 
-def _download_index_bytes(mirror_url: str, index_filename: str) -> bytes:
+def _probe_index_availability(mirror_url: str, index_filename: str) -> None:
+    """Verify index is reachable for mirror failover decisions."""
     url = _index_url(mirror_url, index_filename)
     headers = {"User-Agent": _user_agent()}
     timeout = float(settings.GDAC_MIRROR_TIMEOUT_SECONDS)
 
     with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        return response.content
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+
+
+def _iter_streamed_gzip_lines(mirror_url: str, index_filename: str) -> Iterable[str]:
+    """Stream a remote gz index and yield decoded lines without buffering the full file."""
+    url = _index_url(mirror_url, index_filename)
+    headers = {"User-Agent": _user_agent()}
+    timeout = float(settings.GDAC_MIRROR_TIMEOUT_SECONDS)
+
+    with httpx.Client(timeout=timeout, headers=headers, follow_redirects=True) as client:
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+
+            decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            pending = ""
+
+            for chunk in response.iter_bytes():
+                if not chunk:
+                    continue
+                try:
+                    decompressed = decompressor.decompress(chunk)
+                except zlib.error as exc:
+                    raise RuntimeError(f"Invalid gzip stream for {index_filename}: {str(exc)}") from exc
+
+                if not decompressed:
+                    continue
+
+                pending += decoder.decode(decompressed)
+                lines = pending.split("\n")
+                pending = lines.pop()
+                for line in lines:
+                    yield line.rstrip("\r")
+
+            try:
+                flushed = decompressor.flush()
+            except zlib.error as exc:
+                raise RuntimeError(f"Invalid gzip stream for {index_filename}: {str(exc)}") from exc
+
+            pending += decoder.decode(flushed, final=True)
+            if pending:
+                yield pending.rstrip("\r")
 
 
 def _parse_datetime_utc(raw: str) -> Optional[datetime]:
@@ -111,18 +152,12 @@ def _split_index_row(line: str) -> list[str]:
     return [part.strip() for part in line.split(",")]
 
 
-def _iter_gzip_lines(compressed_bytes: bytes) -> Iterable[str]:
-    buffer = io.BytesIO(compressed_bytes)
-    with gzip.GzipFile(fileobj=buffer, mode="rb") as gz_file:
-        with io.TextIOWrapper(gz_file, encoding="utf-8", errors="replace") as reader:
-            for line in reader:
-                yield line.rstrip("\n")
-
-
-def _parse_index_rows(compressed_bytes: bytes, *, source_name: str) -> list[GDACProfileEntry]:
-    entries: list[GDACProfileEntry] = []
-
-    for raw_line in _iter_gzip_lines(compressed_bytes):
+def _iter_parsed_index_entries(
+    lines: Iterable[str],
+    *,
+    source_name: str,
+) -> Iterable[GDACProfileEntry]:
+    for raw_line in lines:
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -164,34 +199,57 @@ def _parse_index_rows(compressed_bytes: bytes, *, source_name: str) -> list[GDAC
             )
             continue
 
-        entries.append(
-            GDACProfileEntry(
-                file_path=file_path,
-                date=obs_date,
-                latitude=latitude,
-                longitude=longitude,
-                ocean=parts[4],
-                profiler_type=parts[5],
-                institution=parts[6],
-                date_update=updated_at,
-            )
+        yield GDACProfileEntry(
+            file_path=file_path,
+            date=obs_date,
+            latitude=latitude,
+            longitude=longitude,
+            ocean=parts[4],
+            profiler_type=parts[5],
+            institution=parts[6],
+            date_update=updated_at,
         )
 
-    return entries
+
+def _iter_index_entries(mirror_url: str, index_filename: str) -> Iterable[GDACProfileEntry]:
+    return _iter_parsed_index_entries(
+        _iter_streamed_gzip_lines(mirror_url, index_filename),
+        source_name=index_filename,
+    )
 
 
-def _deduplicate_by_path(entries: list[GDACProfileEntry]) -> list[GDACProfileEntry]:
-    deduped: dict[str, GDACProfileEntry] = {}
+def _iter_entries_for_mirror(mirror_url: str) -> Iterable[GDACProfileEntry]:
+    global_entries = 0
+    merge_entries = 0
 
-    for entry in entries:
-        existing = deduped.get(entry.file_path)
-        if existing is None or entry.date_update > existing.date_update:
-            deduped[entry.file_path] = entry
+    for entry in _iter_index_entries(mirror_url, GLOBAL_PROFILE_INDEX):
+        global_entries += 1
+        yield entry
 
-    return list(deduped.values())
+    # Merge/BGC index is optional. Any failure should not fail sync or
+    # trigger mirror failover when the core global index succeeded.
+    try:
+        for entry in _iter_index_entries(mirror_url, MERGE_PROFILE_INDEX):
+            merge_entries += 1
+            yield entry
+    except Exception as exc:
+        logger.warning(
+            "gdac_merge_index_skipped",
+            mirror=mirror_url,
+            index=MERGE_PROFILE_INDEX,
+            error=str(exc),
+        )
+
+    logger.info(
+        "gdac_index_parse_completed",
+        mirror=mirror_url,
+        global_entries=global_entries,
+        merge_entries=merge_entries,
+        total_entries=global_entries + merge_entries,
+    )
 
 
-def download_and_parse_index_with_mirror(mirror_url: str) -> tuple[list[GDACProfileEntry], str]:
+def download_and_parse_index_with_mirror(mirror_url: str) -> tuple[Iterable[GDACProfileEntry], str]:
     """Download and parse GDAC profile indexes with mirror failover.
 
     Returns both parsed entries and the mirror URL that succeeded.
@@ -200,38 +258,9 @@ def download_and_parse_index_with_mirror(mirror_url: str) -> tuple[list[GDACProf
 
     for candidate in _candidate_mirrors(mirror_url):
         try:
+            _probe_index_availability(candidate, GLOBAL_PROFILE_INDEX)
             logger.info("gdac_index_download_started", mirror=candidate)
-
-            global_index = _download_index_bytes(candidate, GLOBAL_PROFILE_INDEX)
-            global_entries = _parse_index_rows(global_index, source_name=GLOBAL_PROFILE_INDEX)
-
-            # Merge/BGC index is optional. Any failure should not fail sync or
-            # trigger mirror failover when the core global index succeeded.
-            merge_entries: list[GDACProfileEntry] = []
-            try:
-                merge_index = _download_index_bytes(candidate, MERGE_PROFILE_INDEX)
-                merge_entries = _parse_index_rows(
-                    merge_index,
-                    source_name=MERGE_PROFILE_INDEX,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "gdac_merge_index_skipped",
-                    mirror=candidate,
-                    index=MERGE_PROFILE_INDEX,
-                    error=str(exc),
-                )
-
-            all_entries = _deduplicate_by_path(global_entries + merge_entries)
-
-            logger.info(
-                "gdac_index_parse_completed",
-                mirror=candidate,
-                global_entries=len(global_entries),
-                merge_entries=len(merge_entries),
-                deduplicated_entries=len(all_entries),
-            )
-            return all_entries, candidate
+            return _iter_entries_for_mirror(candidate), candidate
         except Exception as exc:
             last_error = exc
             logger.warning(
@@ -243,7 +272,7 @@ def download_and_parse_index_with_mirror(mirror_url: str) -> tuple[list[GDACProf
     raise RuntimeError("Failed to download/parse GDAC indexes from all mirrors") from last_error
 
 
-def download_and_parse_index(mirror_url: str) -> list[GDACProfileEntry]:
-    """Compatibility wrapper returning only parsed index entries."""
+def download_and_parse_index(mirror_url: str) -> Iterable[GDACProfileEntry]:
+    """Compatibility wrapper returning parsed index entries iterator."""
     entries, _ = download_and_parse_index_with_mirror(mirror_url)
     return entries

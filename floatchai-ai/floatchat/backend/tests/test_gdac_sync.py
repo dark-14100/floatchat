@@ -59,7 +59,7 @@ def test_run_gdac_sync_completed_creates_jobs_and_checkpoint(db_session, monkeyp
     monkeypatch.setattr(
         sync,
         "download_and_parse_index_with_mirror",
-        lambda _mirror: (entries, "https://used-mirror.example"),
+        lambda _mirror: (iter(entries), "https://used-mirror.example"),
     )
     monkeypatch.setattr(
         sync,
@@ -120,7 +120,7 @@ def test_run_gdac_sync_partial_updates_checkpoint(db_session, monkeypatch):
     monkeypatch.setattr(
         sync,
         "download_and_parse_index_with_mirror",
-        lambda _mirror: (entries, "https://used-mirror.example"),
+        lambda _mirror: (iter(entries), "https://used-mirror.example"),
     )
     monkeypatch.setattr(
         sync,
@@ -151,6 +151,53 @@ def test_run_gdac_sync_partial_updates_checkpoint(db_session, monkeypatch):
     assert state_rows["last_sync_completed_at"]
 
     assert not os.path.exists(temp_path)
+
+
+def test_run_gdac_sync_processes_iterator_in_batches(db_session, monkeypatch):
+    monkeypatch.setattr(sync, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(sync.settings, "GDAC_SYNC_ENABLED", True)
+    monkeypatch.setattr(sync.settings, "GDAC_INDEX_BATCH_SIZE", 2)
+
+    entries = [
+        _entry("dac/aoml/1234567/profiles/R1234567_001.nc"),
+        _entry("dac/aoml/1234567/profiles/R1234567_002.nc"),
+        _entry("dac/aoml/1234567/profiles/R1234567_003.nc"),
+        _entry("dac/aoml/1234567/profiles/R1234567_004.nc"),
+        _entry("dac/aoml/1234567/profiles/R1234567_005.nc"),
+    ]
+
+    monkeypatch.setattr(
+        sync,
+        "download_and_parse_index_with_mirror",
+        lambda _mirror: (iter(entries), "https://used-mirror.example"),
+    )
+
+    observed_batch_sizes: list[int] = []
+
+    def _download_in_batches(batch_entries, _mirror, _workers):
+        observed_batch_sizes.append(len(batch_entries))
+        return [
+            DownloadResult(
+                entry=entry,
+                temp_file_path=_temp_nc_file(),
+                success=True,
+                error=None,
+                attempts=1,
+            )
+            for entry in batch_entries
+        ]
+
+    monkeypatch.setattr(sync, "download_profile_files", _download_in_batches)
+    monkeypatch.setattr(sync.ingest_file_task, "delay", MagicMock())
+    monkeypatch.setattr(sync, "notify", MagicMock())
+
+    result = sync.run_gdac_sync(triggered_by="manual")
+
+    assert result.status == "completed"
+    assert result.profiles_found == 5
+    assert result.profiles_downloaded == 5
+    assert observed_batch_sizes == [2, 2, 1]
+    assert max(observed_batch_sizes) == 2
 
 
 def test_run_gdac_sync_failure_preserves_existing_checkpoint(db_session, monkeypatch):

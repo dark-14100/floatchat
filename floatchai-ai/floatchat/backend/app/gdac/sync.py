@@ -234,26 +234,36 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
 
         checkpoint_date = _parse_checkpoint_date(_state_value(db, "last_sync_index_date"))
 
-        entries, used_mirror = download_and_parse_index_with_mirror(settings.GDAC_PRIMARY_MIRROR)
+        entries_iter, used_mirror = download_and_parse_index_with_mirror(settings.GDAC_PRIMARY_MIRROR)
         run.gdac_mirror = used_mirror
-
-        window_entries = _filter_by_window(
-            entries,
-            checkpoint_date=checkpoint_date,
-            lookback_days=effective_lookback,
-        )
-
-        deduped_entries, skipped_count = _deduplicate_entries(db, window_entries)
-        profiles_found = len(deduped_entries)
-        profiles_skipped = skipped_count
 
         dispatch_failures = 0
         download_failures = 0
 
-        for i in range(0, len(deduped_entries), settings.GDAC_INDEX_BATCH_SIZE):
-            batch = deduped_entries[i : i + settings.GDAC_INDEX_BATCH_SIZE]
+        batch_size = max(1, int(settings.GDAC_INDEX_BATCH_SIZE))
+        rolling_batch: list[GDACProfileEntry] = []
+
+        if checkpoint_date is None:
+            cutoff_date = (_now_utc() - timedelta(days=effective_lookback)).date()
+        else:
+            cutoff_date = None
+
+        def _process_sync_batch(entries_batch: list[GDACProfileEntry]) -> None:
+            nonlocal profiles_found
+            nonlocal profiles_skipped
+            nonlocal profiles_downloaded
+            nonlocal dispatch_failures
+            nonlocal download_failures
+
+            deduped_entries, skipped_count = _deduplicate_entries(db, entries_batch)
+            profiles_found += len(deduped_entries)
+            profiles_skipped += skipped_count
+
+            if not deduped_entries:
+                return
+
             results = download_profile_files(
-                batch,
+                deduped_entries,
                 used_mirror,
                 settings.GDAC_MAX_CONCURRENT_DOWNLOADS,
             )
@@ -291,6 +301,21 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
                     dispatch_failures += 1
                     job.status = "failed"
                     job.error_log = f"Dispatch failed: {str(exc)}"
+
+        for entry in entries_iter:
+            if checkpoint_date is None:
+                if entry.date < cutoff_date:
+                    continue
+            elif entry.date_update.date() <= checkpoint_date:
+                continue
+
+            rolling_batch.append(entry)
+            if len(rolling_batch) >= batch_size:
+                _process_sync_batch(rolling_batch)
+                rolling_batch = []
+
+        if rolling_batch:
+            _process_sync_batch(rolling_batch)
 
         # By confirmed product decision, ingestion is asynchronous and this value
         # is a proxy equal to successfully downloaded files at sync-completion time.
