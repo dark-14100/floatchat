@@ -24,8 +24,8 @@ from app.monitoring.metrics import observe_celery_task_duration
 # Create Celery app
 celery = Celery(
     "floatchat",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=settings.CELERY_BROKER_URL,
+    backend=settings.CELERY_RESULT_BACKEND,
     include=[
         "app.ingestion.tasks",
         "app.search.tasks",
