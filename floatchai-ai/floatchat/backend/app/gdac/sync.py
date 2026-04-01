@@ -289,6 +289,7 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
                 )
                 db.add(job)
                 db.flush()
+                db.commit()
 
                 try:
                     ingest_file_task.delay(
