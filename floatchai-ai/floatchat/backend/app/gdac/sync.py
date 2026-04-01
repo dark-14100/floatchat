@@ -211,7 +211,6 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
         triggered_by=triggered_by,
     )
 
-    temp_paths: list[str] = []
     profiles_found = 0
     profiles_downloaded = 0
     profiles_skipped = 0
@@ -273,7 +272,6 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
                     download_failures += 1
                     continue
 
-                temp_paths.append(result.temp_file_path)
                 profiles_downloaded += 1
 
                 filename = Path(result.entry.file_path).name
@@ -403,10 +401,4 @@ def run_gdac_sync(triggered_by: str = "scheduled", lookback_days: int | None = N
             error=error_message,
         )
     finally:
-        for temp_path in temp_paths:
-            try:
-                if temp_path and Path(temp_path).exists():
-                    Path(temp_path).unlink()
-            except OSError:
-                logger.warning("gdac_sync_temp_cleanup_failed", temp_file_path=temp_path)
         db.close()

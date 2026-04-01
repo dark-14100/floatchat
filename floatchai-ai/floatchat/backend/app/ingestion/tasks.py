@@ -445,6 +445,11 @@ def ingest_file_task(
 
     finally:
         db.close()
+        try:
+            if file_path and file_path.startswith("/tmp/") and os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception:
+            pass
 
 
 @celery.task(
