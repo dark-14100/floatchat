@@ -708,7 +708,7 @@ def retry_stale_jobs(self) -> dict:
 
     A job is considered stale if:
     - Status is 'running' and started_at is more than 30 minutes ago
-    - Status is 'pending' and created_at is more than 15 minutes ago
+    - Status is 'pending' and created_at is more than 2 hours ago
 
     Marks stale jobs as 'failed' so they can be manually retried.
 
@@ -748,7 +748,7 @@ def retry_stale_jobs(self) -> dict:
                 job.completed_at = now
                 stale_count += 1
 
-        # Find stale pending jobs (created > 15 min ago)
+        # Find stale pending jobs (created > 2 hours ago)
         stale_pending = db.execute(
             select(IngestionJob).where(
                 IngestionJob.status == "pending",
@@ -756,14 +756,14 @@ def retry_stale_jobs(self) -> dict:
         ).scalars().all()
 
         for job in stale_pending:
-            if job.created_at and (now - job.created_at).total_seconds() > 900:
+            if job.created_at and (now - job.created_at).total_seconds() > 7200:
                 log.warning(
                     "stale_pending_job_found",
                     job_id=str(job.job_id),
                     created_at=str(job.created_at),
                 )
                 job.status = "failed"
-                job.error_log = "Job marked as failed: exceeded 15-minute pending limit"
+                job.error_log = "Job marked as failed: exceeded 2-hour pending limit"
                 job.completed_at = now
                 stale_count += 1
 
