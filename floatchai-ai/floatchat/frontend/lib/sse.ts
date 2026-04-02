@@ -9,6 +9,7 @@
  */
 
 import type { SSEEvent } from "@/types/chat";
+import { useAuthStore } from "@/store/authStore";
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -102,6 +103,7 @@ export function createQueryStream(
           headers: {
             "Content-Type": "application/json",
             "X-User-ID": getUserId(),
+            "Authorization": `Bearer ${useAuthStore.getState().accessToken ?? ""}`,
           },
           body: JSON.stringify({ query, confirm }),
           signal: controller.signal,
@@ -175,6 +177,7 @@ export function createConfirmStream(
           headers: {
             "Content-Type": "application/json",
             "X-User-ID": getUserId(),
+            "Authorization": `Bearer ${useAuthStore.getState().accessToken ?? ""}`,
           },
           body: JSON.stringify({ message_id: messageId }),
           signal: controller.signal,
