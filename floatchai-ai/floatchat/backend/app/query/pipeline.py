@@ -62,6 +62,11 @@ _PROVIDER_CONFIG = {
         "base_url_attr": "GEMMA_BASE_URL",
         "default_model": "gemma3",
     },
+    "gemini": {
+        "key_attr": "GEMINI_API_KEY",
+        "base_url_attr": "GEMINI_BASE_URL",
+        "default_model": "gemini-2.0-flash",
+    },
     "openai": {
         "key_attr": "OPENAI_API_KEY",
         "base_url_attr": None,  # Uses default OpenAI URL
