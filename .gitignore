@@ -1,3 +1,9 @@
 # Python bytecode/cache noise
 __pycache__/
 *.pyc
+
+# Environment files (never commit)
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
